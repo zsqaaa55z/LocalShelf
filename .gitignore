@@ -1,0 +1,42 @@
+# Personal Xcode state and build output
+**/xcuserdata/
+*.xcuserstate
+.DS_Store
+DerivedData/
+build/
+.build/
+work/
+*.xcresult/
+*.app/
+*.ipa
+*.dSYM/
+*.log
+__pycache__/
+*.pyc
+# Never commit signing material, local service configuration or user libraries.
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+.env
+.env.*
+pairing*.json
+identity*.json
+*.db
+*.db-*
+*.sqlite*
+*.cover
+ReadingBackups/
+*.xcconfig.local
+# Android local SDK / signing / generated state
+**/.gradle/
+**/build/
+local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+.idea/

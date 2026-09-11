@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>UIUserInterfaceStyle</key><string>Dark</string>
+<key>CADisableMinimumFrameDurationOnPhone</key><true/>
+<key>NSCameraUsageDescription</key><string>扫描安卓 LocalShelf 的局域网配对二维码；相机画面不保存、不上传。</string>
+<key>NSLocalNetworkUsageDescription</key><string>连接你授权的安卓或 NAS 书库，读取封面和已下载图片，不上传到云端。</string>
+<key>NSBonjourServices</key><array><string>_localshelf._tcp</string></array>
+<key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
+<key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+</dict></plist>

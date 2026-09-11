@@ -1,0 +1,25 @@
+LocalShelf Android Bridge
+
+Project code: MIT License (see LocalShelf-MIT.txt).
+
+NanoHTTPD 2.3.1 — org.nanohttpd:nanohttpd:2.3.1
+License: BSD-3-Clause. Unmodified Maven dependency.
+The complete LICENSE.txt from the exact 2.3.1 JAR is retained in
+NanoHTTPD-LICENSE.txt; its attribution differs from the repository root license.
+Source: https://github.com/NanoHttpd/nanohttpd/tree/nanohttpd-project-2.3.1
+
+ZXing Core 3.5.3 — com.google.zxing:core:3.5.3
+Copyright (C) ZXing authors.
+License: Apache-2.0 (see Apache-2.0.txt). Unmodified Maven dependency.
+Source: https://github.com/zxing/zxing/tree/zxing-3.5.3/core
+ZXing-NOTICE.txt retains the upstream release's root NOTICE in full.
+The root NOTICE mentions additional ZXing modules; it does not mean
+JCommander or Barcode4J is a runtime dependency of this bridge.
+ZXing javase / jai-imageio are not included in this app.
+
+Android SDK and Java platform components retain their own licenses.
+Build tools and Android SDK binaries are not redistributed in the source package.
+
+See the repository THIRD_PARTY_NOTICES.md for implementation references,
+AI-assisted development and icon provenance. The project is not affiliated
+with or endorsed by EhViewer, Google, Apple or the dependency authors.
