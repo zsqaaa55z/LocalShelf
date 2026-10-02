@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!server.py
+!audit.py
+!LICENSE
+.env*
+__pycache__/

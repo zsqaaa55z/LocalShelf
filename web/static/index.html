@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark"><meta name="theme-color" content="#0b0e10">
+  <title>LocalShelf · 私人书库</title><link rel="icon" href="icon.svg"><link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <section id="bootView" class="login-view" role="status"><div><img src="icon.svg" width="48" height="48" alt=""><h2>LocalShelf</h2><p class="muted">正在连接你的书库…</p></div></section>
+  <section id="loginView" class="login-view" hidden>
+    <form id="loginForm" class="login-card">
+      <img src="icon.svg" width="60" height="60" alt=""><p class="eyebrow">LOCALSHELF / WEB READER</p>
+      <h1>你的书库，<br>换一块屏幕继续。</h1><p class="muted">连接自己的 NAS，安静地阅读。</p>
+      <label for="password">阅读密码</label><input id="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="与 iPhone 阅读端相同">
+      <button class="primary" id="loginButton" type="submit">进入书库 <span aria-hidden="true">→</span></button>
+      <p id="loginError" class="error" role="alert"></p>
+      <p class="small muted">独立只读入口 · 不修改漫画原文件<br>会话保留 8 小时；服务重启后需要重新登录。</p>
+    </form>
+  </section>
+
+  <div id="libraryView" hidden>
+    <header class="topbar"><a class="brand" href="./"><img src="icon.svg" width="32" height="32" alt="">LocalShelf <span>WEB</span></a>
+      <nav class="library-tabs" aria-label="选择书库"><button data-library="eh" aria-pressed="true">Eh 同步</button><button data-library="manual" aria-pressed="false">手动上传</button></nav>
+      <button id="settingsButton" class="quiet">设置</button>
+    </header>
+    <main class="shelf">
+      <section class="shelf-heading"><div><p class="eyebrow" id="shelfEyebrow">YOUR PRIVATE COLLECTION</p><h1 id="shelfTitle">书库 <span id="bookCount">—</span></h1><p class="muted" id="shelfNote">保留原始顺序，按你熟悉的方式浏览。</p></div>
+        <button id="refreshButton" class="quiet">↻ 刷新</button></section>
+      <div class="toolbar"><div class="toolbar-left"><button id="backRelated" class="quiet" hidden>← 返回书库</button>
+        <label>每页 <select id="pageSize" aria-label="每页漫画数量"></select></label>
+        <label>列数 <select id="columns" aria-label="封面列数"><option value="auto">自适应</option><option value="3">3 列</option><option value="4">4 列</option><option value="5">5 列</option><option value="6">6 列</option></select></label>
+      </div><span class="small muted" id="rangeLabel"></span></div>
+      <div id="status" class="status" role="status" aria-live="polite">正在连接书库…</div>
+      <section id="bookGrid" class="book-grid" aria-label="漫画列表" aria-busy="true"></section>
+      <div id="emptyState" class="empty" hidden><h2>这里还没有漫画</h2><p class="muted">手动书库可使用 Windows 上传端导入。</p></div>
+    </main>
+    <footer class="pagination"><button id="previousCatalog" class="quiet">← 上一页</button><div><select id="catalogPage" aria-label="书库页码"></select><span id="catalogTotal" class="muted"></span></div><button id="nextCatalog" class="quiet">下一页 →</button></footer>
+    <button id="toTop" class="to-top quiet" aria-label="回到本页顶部" hidden>↑</button>
+  </div>
+
+  <section id="readerView" class="reader" hidden aria-label="漫画阅读">
+    <header class="reader-header"><button id="closeReader" class="quiet">← 书库</button><div><h2 id="readerTitle"></h2><span id="readerSubtitle" class="muted small"></span></div><button id="fullscreenButton" class="quiet" aria-label="切换全屏">全屏</button></header>
+    <div id="pageStage" class="page-stage" tabindex="0" aria-label="漫画图片；方向键翻页"><img id="pageImage" alt="" decoding="async"><div id="pageStatus" class="page-status" role="status"></div><button id="retryPage" class="quiet" hidden>重新加载</button></div>
+    <footer class="reader-controls"><input id="pageSlider" type="range" min="0" max="0" value="0" aria-label="阅读进度"><div class="reader-buttons"><button id="previousPage" class="quiet">← 上一页</button><label class="page-position"><input id="pageNumber" type="number" min="1" value="1" aria-label="跳转到第几张"><span id="pageTotal">/ —</span></label><button id="nextPage" class="quiet">下一页 →</button></div><p class="reader-help">← → 翻页 · Esc 返回 · F 全屏 · 进度仅保存在此浏览器</p></footer>
+  </section>
+
+  <dialog id="settingsDialog"><div class="dialog-heading"><h2>阅读设置</h2><button data-close="settingsDialog" class="quiet" aria-label="关闭设置">×</button></div><div class="settings-row"><div><strong>隐藏所有封面</strong><p>停止封面加载；保留名称和页数。</p></div><input id="hideCovers" type="checkbox" role="switch" aria-label="隐藏所有封面"></div><div class="settings-row"><div><strong>相邻页预加载</strong><p>只预取前后各一页；大图自动收紧。</p></div><input id="preloadPages" type="checkbox" role="switch" aria-label="相邻页预加载"></div><button id="resetProgress" class="quiet full">重置此浏览器的全部阅读进度</button><p class="small muted">不会更改 iPhone / Android 的进度，也不会修改 NAS 上的文件。使用共享电脑后请退出登录。</p><button id="logoutButton" class="danger full">退出登录</button><p class="small muted">LocalShelf Web · 0.1.0-dev · 自用版</p></dialog>
+  <dialog id="bookDialog"><div class="dialog-heading"><h2 id="bookDialogTitle">漫画</h2><button data-close="bookDialog" class="quiet" aria-label="关闭漫画菜单">×</button></div><button id="readBookButton" class="primary full">开始 / 继续阅读</button><button id="authorButton" class="quiet full">查看同作者漫画</button><button id="seriesButton" class="quiet full">查看同系列作品</button><div id="relatedOptions" class="related-options" role="status"></div><p class="small muted">关联来自现有 NAS 规则；“可能相关”不是已确认匹配。</p></dialog>
+  <dialog id="resetDialog"><h2>重置全部阅读进度？</h2><p class="muted">仅清除此浏览器的记录，不影响文件或其他设备。</p><div class="dialog-actions"><button data-close="resetDialog" class="quiet">取消</button><button id="confirmReset" class="danger">确认重置</button></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

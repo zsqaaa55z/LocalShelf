@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>UIUserInterfaceStyle</key><string>Dark</string>
+<key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
 <key>CADisableMinimumFrameDurationOnPhone</key><true/>
 <key>NSCameraUsageDescription</key><string>扫描安卓 LocalShelf 的局域网配对二维码；相机画面不保存、不上传。</string>
 <key>NSLocalNetworkUsageDescription</key><string>连接你授权的安卓或 NAS 书库，读取封面和已下载图片，不上传到云端。</string>

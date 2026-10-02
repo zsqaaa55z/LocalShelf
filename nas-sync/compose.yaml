@@ -1,0 +1,32 @@
+services:
+  localshelf-sync:
+    build: .
+    image: localshelf-sync:0.4.5-dev
+    restart: unless-stopped
+    user: "${SYNC_UID:-1000}:${SYNC_GID:-1000}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,size=64m
+    ports:
+      - "${NAS_IP:?请设置 NAS 的局域网 IPv4 地址}:8443:8443"
+    environment:
+      NAS_IP: "${NAS_IP:?请设置 NAS 的局域网 IPv4 地址}"
+      SYNC_RESERVE_GIB: "${SYNC_RESERVE_GIB:-10}"
+      SYNC_RESERVE_PERCENT: "${SYNC_RESERVE_PERCENT:-2}"
+      SYNC_WARNING_GIB: "${SYNC_WARNING_GIB:-50}"
+      SYNC_WARNING_PERCENT: "${SYNC_WARNING_PERCENT:-10}"
+    volumes:
+      - type: bind
+        source: "${SYNC_DATA_DIR:?必须指定新SSD上已建立的专用目录}"
+        target: /data
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

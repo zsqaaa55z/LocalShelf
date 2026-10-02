@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>local.shelf.signer</string>
+<key>CFBundleExecutable</key><string>LocalShelfSigner</string>
+<key>CFBundleName</key><string>LocalShelf 续签助手</string>
+<key>CFBundleDisplayName</key><string>LocalShelf 续签助手</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.1.2</string>
+<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleIconFile</key><string>RenewIcon</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>通过 Xcode 连接已配对的 iPhone，为 LocalShelf 续签并覆盖安装。</string>
+</dict></plist>

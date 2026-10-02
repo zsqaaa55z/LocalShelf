@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!gateway.py
+!LICENSE
+!static/
+!static/**
+.env*
+__pycache__/

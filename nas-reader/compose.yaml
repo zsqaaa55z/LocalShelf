@@ -1,0 +1,32 @@
+services:
+  localshelf-reader:
+    build: .
+    image: localshelf-reader:0.1.18-dev
+    restart: unless-stopped
+    user: "${READER_UID:-1000}:${READER_GID:-10}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 2.0
+    tmpfs:
+      - "/tmp:rw,size=32m"
+    ports:
+      - "${NAS_IP:?请指定NAS局域网IPv4}:8089:8089"
+    volumes:
+      - type: bind
+        source: "${SYNC_DATA_DIR:?现有同步数据目录}"
+        target: /source
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${READER_STATE_DIR:?独立阅读服务配置目录}"
+        target: /state
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

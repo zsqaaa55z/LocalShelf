@@ -6,11 +6,15 @@ import UniformTypeIdentifiers
 // Nuke-inspired token bucket: burst on first display, throttle request churn only.
 struct CoverRequestBucket {
     private(set) var tokens:Double=6
+    private var capacity:Double=6,rate:Double=8
     private var last:TimeInterval?
     mutating func take(now:TimeInterval)->Bool {
-        tokens=min(6,tokens+max(0,now-(last ?? now))*8);last=now
+        tokens=min(capacity,tokens+max(0,now-(last ?? now))*rate);last=now
         guard tokens>=1 else{return false};tokens-=1;return true
     }
+    #if DEBUG && targetEnvironment(simulator)
+    mutating func configureExperiment(burst:Int,rate:Int){capacity=Double(max(1,min(12,burst)));self.rate=Double(max(1,min(24,rate)));tokens=capacity;last=nil}
+    #endif
 }
 actor CoverRequestGate {
     private var bucket=CoverRequestBucket()
@@ -21,6 +25,9 @@ actor CoverRequestGate {
             try await Task.sleep(nanoseconds:50_000_000)
         }
     }
+    #if DEBUG && targetEnvironment(simulator)
+    func configureExperiment(burst:Int,rate:Int){bucket.configureExperiment(burst:burst,rate:rate)}
+    #endif
 }
 
 struct CoverRecord:Codable {
@@ -38,12 +45,38 @@ struct CoverRecord:Codable {
               value.etag==nil || validETag(value.etag!) else{throw LibraryError.malformed}
         return value
     }
-    static func validETag(_ value:String)->Bool {value.utf8.count==68 && value.range(of:"^W/\"[a-f0-9]{64}\"$",options:.regularExpression) != nil}
+    static func validETag(_ value:String)->Bool {
+        (value.utf8.count==66 || value.utf8.count==68) &&
+        value.range(of:"\\A(?:W/)?\"[a-f0-9]{64}\"\\z",options:.regularExpression) != nil
+    }
+    static func equivalentETag(_ lhs:String,_ rhs:String)->Bool {
+        guard validETag(lhs),validETag(rhs) else{return false}
+        return (lhs.hasPrefix("W/") ? String(lhs.dropFirst(2)):lhs) ==
+               (rhs.hasPrefix("W/") ? String(rhs.dropFirst(2)):rhs)
+    }
 }
 
 // Kingfisher-inspired processed-image cache. Original files are never changed.
 actor SmartCoverDecoder {
     private(set) var decodes=0
+    // Only a negotiated NAS derivative may bypass re-encoding. In particular,
+    // original fallbacks, animated files, EXIF rotation and malformed headers
+    // keep the existing normalized-thumbnail path. The full display decode is
+    // still required before showing an image; no trust is granted by its URL.
+    func reusableThumbnail(_ data:Data,width:Int?)throws->Bool {
+        try Task.checkCancellation()
+        guard let width,[320,480,640].contains(width),!data.isEmpty,data.count<=1024*1024 else{return false}
+        return autoreleasepool {
+            guard let source=CGImageSourceCreateWithData(data as CFData,[kCGImageSourceShouldCache:false] as CFDictionary),
+                  CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
+                  CGImageSourceGetCount(source)==1,
+                  let values=CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],
+                  let w=values[kCGImagePropertyPixelWidth] as? Int,let h=values[kCGImagePropertyPixelHeight] as? Int,
+                  w>0,h>0,w<=width,h<=width*2,
+                  (values[kCGImagePropertyOrientation] as? Int ?? 1)==1 else{return false}
+            return true
+        }
+    }
     func unpack(_ data:Data)throws->CoverRecord {
         try Task.checkCancellation()
         guard data.count<=8*1024*1024 else{throw LibraryError.malformed}
@@ -118,6 +151,14 @@ actor CoverEncoder {
     private var prefetched=Set<String>(),near=Set<String>()
     private var scope:String?,revision="",identities:[String:String]=[:]
     private var suspended=false
+    var cacheOnly=false
+    private var physicalLimit:Int {
+        #if DEBUG && targetEnvironment(simulator)
+        return experimentLimit
+        #else
+        return 3
+        #endif
+    }
     private let decoder=SmartCoverDecoder(),gate=CoverRequestGate()
     private let disk:CoverDiskCache?
     let writes:CoverWriteQueue
@@ -125,7 +166,13 @@ actor CoverEncoder {
     var nearCount=3
     var changed:(()->Void)?
     var conditionalLoad:((String,String?)async throws->LimitedHTTP.Payload)?
+    var variantLoad:((String,String?,Int)async throws->LimitedHTTP.Payload)?
     #if DEBUG && targetEnvironment(simulator)
+    private var experimentLimit=3
+    func configureExperiment(limit:Int,burst:Int,rate:Int)async {
+        precondition(jobs.isEmpty && running.isEmpty)
+        experimentLimit=max(2,min(4,limit));await gate.configureExperiment(burst:burst,rate:rate)
+    }
     var idle:Bool{jobs.isEmpty && running.isEmpty && writes.idle}
     private var benchmarkHold=false
     var benchmarkRunning:Int{running.count}
@@ -135,6 +182,12 @@ actor CoverEncoder {
     #endif
     init(disk:CoverDiskCache?=nil,writes:CoverWriteQueue?=nil){self.disk=disk;self.writes=writes ?? CoverWriteQueue()}
     func configureScope(_ value:String?,revision:String="",identities:[String:String]=[:]){
+        if let value,value==scope,!identities.isEmpty,identities.values.allSatisfy({$0.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil}) {
+            // Content-addressed images survive catalog-only reorders. Cancel
+            // only jobs whose identity disappeared/changed, never all listeners.
+            for path in Array(jobs.keys) where self.identities[path]==nil || self.identities[path] != identities[path]{remove(path)}
+            self.revision=revision;self.identities=identities;return
+        }
         if value==scope,self.revision==revision,!identities.contains(where:{self.identities[$0.key] != nil && self.identities[$0.key] != $0.value}){self.identities=identities;return}
         reset(keepCache:value != nil && value==scope)
         self.scope=value;self.revision=revision;self.identities=identities
@@ -144,13 +197,15 @@ actor CoverEncoder {
         return CoverRules.key(scope:scope+"\n"+(identities[path] ?? "legacy")+"\nthumbnail-v2-\(pixelSize)",path:path)
     }
     private func memoryKey(_ path:String)->String{key(path) ?? "temporary-\(pixelSize)-"+path}
+    private func validationRevision(_ path:String)->String{identities[path] ?? revision}
     func prefetch(_ paths:[String],load:@escaping(String)async throws->Data){
+        guard !cacheOnly else{return}
         let values=Array(paths.prefix(18));let wanted=Set(values)
         for path in prefetched.subtracting(wanted) where jobs[path]?.listeners.isEmpty==true{remove(path)}
         prefetched=wanted;near=Set(values.prefix(nearCount))
         guard !suspended else{return}
         for path in values where jobs[path]==nil {
-            if let saved=memory.value(for:memoryKey(path)),saved.revision==revision,Date().timeIntervalSince(saved.checked)<24*3600{continue}
+            if let saved=memory.value(for:memoryKey(path)),saved.revision==validationRevision(path),Date().timeIntervalSince(saved.checked)<24*3600{continue}
             jobs[path]=Job(load:{try await load(path)});order.append(path)
         }
         pump()
@@ -158,13 +213,13 @@ actor CoverEncoder {
     func subscribe(_ path:String,id:UUID,load:@escaping()async throws->Data,complete:@escaping Completion){
         if let value=memory.value(for:memoryKey(path)){
             complete(.success(value.image))
-            if value.revision==revision,Date().timeIntervalSince(value.checked)<24*3600{return}
+            if value.revision==validationRevision(path),Date().timeIntervalSince(value.checked)<24*3600{return}
         }
         if let job=jobs[path]{job.listeners[id]=complete}
         else{let job=Job(load:load);job.listeners[id]=complete;jobs[path]=job;order.append(path)}
         // Demand preempts speculative work, but cancelled work keeps its physical
         // slot until it actually finishes. No unlimited cancel/restart fan-out.
-        if running.count>=3,let speculative=order.first(where:{$0 != path && jobs[$0]?.task != nil && jobs[$0]?.listeners.isEmpty==true}){remove(speculative)}
+        if running.count>=physicalLimit,let speculative=order.first(where:{$0 != path && jobs[$0]?.task != nil && jobs[$0]?.listeners.isEmpty==true}){remove(speculative)}
         pump()
     }
     private func remove(_ path:String){jobs.removeValue(forKey:path)?.task?.cancel();order.removeAll{$0==path}}
@@ -195,14 +250,14 @@ actor CoverEncoder {
     private func pump(){
         guard !suspended else{return}
         let queue=order.filter{jobs[$0]?.listeners.isEmpty==false}+order.filter{jobs[$0]?.listeners.isEmpty==true}
-        for path in queue where running.count<3 {
+        for path in queue where running.count<physicalLimit {
             guard let job=jobs[path],job.task==nil else{continue}
             #if DEBUG && targetEnvironment(simulator)
             if benchmarkHold && job.benchmarkParked{continue}
             #endif
             if job.listeners.isEmpty && jobs.values.contains(where:{$0.task != nil && $0.listeners.isEmpty}){continue}
             let ticket=UUID();job.ticket=ticket;running.insert(ticket)
-            let disk=self.disk,key=key(path),memKey=memoryKey(path),revision=self.revision,pixels=pixelSize,loader=conditionalLoad
+            let disk=self.disk,key=key(path),memKey=memoryKey(path),revision=validationRevision(path),pixels=pixelSize,loader=conditionalLoad,variantLoader=variantLoad
             job.task=Task{[weak self] in
                 guard let self else{return}
                 defer {
@@ -237,6 +292,7 @@ actor CoverEncoder {
                     }
                     guard live() else{throw CancellationError()}
                     if saved?.fresh(revision:revision) != true {
+                        if self.cacheOnly {if saved==nil{throw LibraryError.malformed};return}
                         #if DEBUG && targetEnvironment(simulator)
                         // Test-only network policy: cached reads never wait for
                         // settling, and parked misses release physical slots.
@@ -245,15 +301,18 @@ actor CoverEncoder {
                         needsWrite=true
                         try await self.gate.acquire();guard live() else{throw CancellationError()}
                         let response:LimitedHTTP.Payload
-                        if let loader{response=try await loader(path,saved?.etag)}
+                        if let variantLoader{response=try await variantLoader(path,saved?.etag,pixels)}
+                        else if let loader{response=try await loader(path,saved?.etag)}
                         else{response=LimitedHTTP.Payload(data:try await job.load(),status:200,etag:nil)}
                         guard live() else{throw CancellationError()}
                         if response.status==304 {
-                            guard var record=saved,let oldTag=record.etag,response.etag==oldTag else{throw LibraryError.malformed}
-                            record.checked=Date();record.revision=revision;saved=record
+                            guard var record=saved,let oldTag=record.etag,let currentTag=response.etag,
+                                  response.data.isEmpty,CoverRecord.equivalentETag(oldTag,currentTag) else{throw LibraryError.malformed}
+                            record.etag=currentTag;record.checked=Date();record.revision=revision;saved=record
                         }else{
                             guard response.status==200,!response.data.isEmpty,response.data.count<=8*1024*1024 else{throw LibraryError.malformed}
-                            saved=CoverRecord(bytes:response.data,thumbnail:false,etag:response.etag.flatMap{CoverRecord.validETag($0) ? $0:nil},checked:Date(),revision:revision);image=nil;replaced=true
+                            let reusable=try await self.decoder.reusableThumbnail(response.data,width:response.thumbnailPixels)
+                            saved=CoverRecord(bytes:response.data,thumbnail:reusable,etag:response.etag.flatMap{CoverRecord.validETag($0) ? $0:nil},checked:Date(),revision:revision);image=nil;replaced=true
                         }
                     }
                     guard let record=saved,live() else{throw CancellationError()}
@@ -306,7 +365,7 @@ actor PlaybackFrameBuffer {
         work=nil;guard !stopped else{return}
         switch result {
         case .success(let frame):
-            guard previousCost+displayedCost+queuedCost+cost(index,frame.0)<=budget else{failure=LibraryError.malformed;return}
+            guard previousCost+displayedCost+queuedCost+cost(index,frame.0)<=budget else{failure=AnimationFailure.resources;return}
             queue.append((index,frame.0,frame.1));nextIndex=(index+1)%session.info.count
         case .failure(let error):failure=error
         }
@@ -316,7 +375,7 @@ actor PlaybackFrameBuffer {
         while queue.isEmpty {
             try Task.checkCancellation();guard !stopped else{throw CancellationError()}
             if let failure{throw failure}
-            fill();guard let task=work else{throw LibraryError.malformed};await task.value
+            fill();guard let task=work else{throw AnimationFailure.resources};await task.value
         }
         try Task.checkCancellation();guard !stopped else{throw CancellationError()}
         let frame=queue.removeFirst();previousCost=displayedCost;displayedCost=cost(frame.0,frame.1);fill();return(frame.1,frame.2)
@@ -337,13 +396,17 @@ enum CoverV2Checks {
         defer{try? FileManager.default.removeItem(at:root)}
         let path="/v1/books/1/cover",tag="W/\""+String(repeating:"a",count:64)+"\"",tag2="W/\""+String(repeating:"b",count:64)+"\""
         pass(CoverRecord.validETag(tag) && !CoverRecord.validETag(tag+"\n") && !CoverRecord.validETag(tag+"\r\nInjected: value"),"validator rejects line breaks and header injection")
+        let strongTag=String(tag.dropFirst(2)),strongTag2=String(tag2.dropFirst(2))
+        pass(CoverRecord.validETag(strongTag) && CoverRecord.equivalentETag(tag,strongTag),"NAS strong and Android weak SHA validators are compatible")
+        pass(!CoverRecord.equivalentETag(tag,strongTag2) && !CoverRecord.validETag(strongTag+"\n") && !CoverRecord.validETag("w/"+strongTag),"different hashes and malformed strong validators fail closed")
         let sample=ReaderDemo.data("1"),identity=String(repeating:"c",count:64)
         var calls=0,validators:[String?]=[],serverTag=tag
         let disk=CoverDiskCache(root:root),writes=CoverWriteQueue()
         let pipeline=SmartCoverPipeline(disk:disk,writes:writes)
         func loader(_ path:String,_ validator:String?)async throws->LimitedHTTP.Payload {
             calls+=1;validators.append(validator)
-            return .init(data:validator==serverTag ? Data():sample,status:validator==serverTag ? 304:200,etag:serverTag)
+            let unchanged=validator.map{CoverRecord.equivalentETag($0,serverTag)} ?? false
+            return .init(data:unchanged ? Data():sample,status:unchanged ? 304:200,etag:serverTag)
         }
         pipeline.conditionalLoad=loader
         func configured(_ pipeline:SmartCoverPipeline,_ revision:String,_ bookIdentity:String=identity){pipeline.configureScope("device/library",revision:revision,identities:[path:bookIdentity])}
@@ -362,17 +425,27 @@ enum CoverV2Checks {
             pass(calls==1,"restart reads processed disk cover without download")
             let oldDelivered=delivered;subscribe(restarted,path)
             pass(delivered==oldDelivered+1 && calls==1,"memory hit returns synchronously without request")
+            serverTag=strongTag
             configured(restarted,"v2");subscribe(restarted,path);await wait{restarted.idle}
-            pass(calls==2 && validators.last! == tag,"catalog change revalidates existing book with ETag")
-            pass(try CoverRecord.unpack(try await disk.value(key)!).revision=="v2","304 retains image and updates validation metadata")
-            serverTag=tag2;configured(restarted,"v3");subscribe(restarted,path);await wait{restarted.idle}
+            pass(calls==1,"catalog-only change keeps content-addressed cover without revalidation")
+            var oldRecord=try CoverRecord.unpack(try await disk.value(key)!);oldRecord.checked=Date(timeIntervalSinceNow:-90_000)
+            try await disk.put(oldRecord.packed(),key:key,ticket:await disk.ticket())
+            let revalidating=SmartCoverPipeline(disk:disk);revalidating.conditionalLoad=loader;configured(revalidating,"v2")
+            subscribe(revalidating,path);await wait{revalidating.idle}
+            pass(calls==2 && validators.last! == tag,"expired cover still revalidates with ETag")
+            pass(try CoverRecord.unpack(try await disk.value(key)!).revision==identity,"304 retains image and updates content-identity validation metadata")
+            pass(try CoverRecord.unpack(try await disk.value(key)!).etag==strongTag,"weak-to-strong 304 persists NAS validator without discarding cache")
+            oldRecord=try CoverRecord.unpack(try await disk.value(key)!);oldRecord.checked=Date(timeIntervalSinceNow:-90_000)
+            try await disk.put(oldRecord.packed(),key:key,ticket:await disk.ticket())
+            let replacing=SmartCoverPipeline(disk:disk);replacing.conditionalLoad=loader
+            serverTag=strongTag2;configured(replacing,"v3");subscribe(replacing,path);await wait{replacing.idle}
             let replaced=try CoverRecord.unpack(try await disk.value(key)!)
-            pass(calls==3 && replaced.etag==tag2,"changed cover replaces processed cache")
+            pass(calls==3 && replaced.etag==strongTag2,"changed cover replaces processed cache with strong validator")
             var expired=try CoverRecord.unpack(try await disk.value(key)!);expired.checked=Date(timeIntervalSinceNow:-90_000)
             try await disk.put(expired.packed(),key:key,ticket:await disk.ticket())
             let stale=SmartCoverPipeline(disk:disk);stale.conditionalLoad=loader;configured(stale,"v3")
             var validationGate:CheckedContinuation<LimitedHTTP.Payload,Error>?
-            stale.conditionalLoad={_,etag in pass(etag==tag2,"daily revalidation sends previous validator");return try await withCheckedThrowingContinuation{validationGate=$0}}
+            stale.conditionalLoad={_,etag in pass(etag==strongTag2,"daily revalidation sends strong NAS validator");return try await withCheckedThrowingContinuation{validationGate=$0}}
             let before=delivered;subscribe(stale,path);await wait{validationGate != nil}
             pass(delivered>before,"stale thumbnail displayed before network validation finishes")
             validationGate?.resume(returning:.init(data:Data(),status:304,etag:tag2));await wait{stale.idle}
@@ -389,13 +462,21 @@ enum CoverV2Checks {
             let bad=SmartCoverPipeline();bad.conditionalLoad={_,_ in .init(data:Data(),status:304,etag:tag)}
             let beforeFailure=failures;subscribe(bad,path);await wait{bad.idle}
             pass(failures==beforeFailure+1,"304 without a cached representation is rejected")
+            for (label,invalidTag,body) in [("different hash",tag,Data()),("unexpected body",tag2,Data([1])),("malformed tag",tag2+"\n",Data())] {
+                let invalid=SmartCoverPipeline(disk:disk);configured(invalid,"invalid-304")
+                let stable=CoverRecord(bytes:sample,thumbnail:false,etag:strongTag2,checked:Date(timeIntervalSinceNow:-90_000),revision:"stable")
+                try await disk.put(stable.packed(),key:key,ticket:await disk.ticket())
+                invalid.conditionalLoad={_,_ in .init(data:body,status:304,etag:invalidTag)}
+                subscribe(invalid,path);await wait{invalid.idle}
+                pass(try CoverRecord.unpack(try await disk.value(key)!).revision=="stable","invalid 304 \(label) cannot mark cached cover fresh")
+            }
             let clearing=SmartCoverPipeline(disk:disk);clearing.configureScope("clearing")
             var late:CheckedContinuation<LimitedHTTP.Payload,Error>?
             clearing.conditionalLoad={_,_ in try await withCheckedThrowingContinuation{late=$0}}
             subscribe(clearing,path);await wait{late != nil};clearing.reset();try await disk.clear()
             late?.resume(returning:.init(data:sample,status:200,etag:tag));await wait{clearing.idle}
             pass(try await disk.usage()==0,"cancelled response cannot repopulate cleared disk cache")
-            pass(CoverRules.diskBudget==2_000_000_000 && pipeline.memoryCost<=32*1024*1024,"disk remains 2 GB and decoded cover memory remains bounded")
+            pass(CoverRules.diskBudget+MediaDiskBudget.body==2_000_000_000 && pipeline.memoryCost<=32*1024*1024,"combined media disk remains 2 GB and decoded cover memory remains bounded")
         }catch{preconditionFailure("cover-v2 disk checks: \(error)")}
         // A deliberately cancellation-ignoring loader exercises physical slot accounting.
         let queue=SmartCoverPipeline();var gates:[String:CheckedContinuation<Data,Error>]=[:],starts:[String]=[]
@@ -462,12 +543,15 @@ private final class ParseProbe:@unchecked Sendable {
 }
 enum PageListChecks {
     @MainActor static func run()async {
+        let previous=UserDefaults.standard.object(forKey:"server.selected")
+        UserDefaults.standard.set("android",forKey:"server.selected")
+        defer{UserDefaults.standard.set(previous,forKey:"server.selected")}
         var count=0
         func pass(_ value:Bool,_ label:String){precondition(value,label);count+=1;print("PASS \(label)")}
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[PairingFixture.self]
         let parser=MetadataParser(),library=Library(transport:LimitedHTTP(configuration:config),loadPair:{nil},savePair:{_ in},removePair:{},metadata:parser)
         library.setReading(true)
-        let code=PairingCode(app:"localshelf",version:2,address:"http://192.168.240.124:8088",token:PairingFixture.token,deviceId:PairingFixture.id)
+        let code=PairingCode(app:"localshelf",version:2,address:"http://192.168.1.124:8088",token:PairingFixture.token,deviceId:PairingFixture.id)
         await library.connect(code:code)
         do {
             var result=try await library.pageList("1")
@@ -561,6 +645,9 @@ enum ScrollNetworkBenefits {
 }
 enum ParsingChecks {
     @MainActor static func run()async {
+        let previous=UserDefaults.standard.object(forKey:"server.selected")
+        UserDefaults.standard.set("android",forKey:"server.selected")
+        defer{UserDefaults.standard.set(previous,forKey:"server.selected")}
         var count=0
         func pass(_ value:Bool,_ label:String){precondition(value,label);count+=1;print("PASS \(label)")}
         func wait(_ test:()->Bool)async{for _ in 0..<1000{if test(){return};try? await Task.sleep(nanoseconds:1_000_000)};preconditionFailure("parse test timeout")}
@@ -605,7 +692,7 @@ enum ParsingChecks {
             await connectionParser.setHook{connectionProbe.block()}
             let library=Library(transport:LimitedHTTP(configuration:config),loadPair:{nil},savePair:{_ in preconditionFailure("obsolete connection saved")},removePair:{},metadata:connectionParser)
             library.setReading(true)
-            let code=PairingCode(app:"localshelf",version:2,address:"http://192.168.240.124:8088",token:PairingFixture.token,deviceId:PairingFixture.id)
+            let code=PairingCode(app:"localshelf",version:2,address:"http://192.168.1.124:8088",token:PairingFixture.token,deviceId:PairingFixture.id)
             let connecting=Task{await library.connect(code:code)}
             await wait{connectionProbe.snapshot.0==1};library.setForeground(false);connectionProbe.gate.signal();await connecting.value
             pass(library.books.isEmpty && library.base==nil && library.paired==nil,"backgrounding during parse rejects obsolete connection and pairing write")
@@ -679,13 +766,16 @@ enum CacheReadBenefits {
 #if DEBUG && targetEnvironment(simulator)
 enum P34Checks {
     @MainActor static func run()async {
+        let previous=UserDefaults.standard.object(forKey:"server.selected")
+        UserDefaults.standard.set("android",forKey:"server.selected")
+        defer{UserDefaults.standard.set(previous,forKey:"server.selected")}
         var count=0
         func pass(_ value:Bool,_ name:String){precondition(value,name);count+=1;print("PASS \(name)")}
         func wait(_ condition:()->Bool)async{for _ in 0..<1000{if condition(){return};try? await Task.sleep(nanoseconds:5_000_000)};preconditionFailure("P3/P4 timeout")}
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[PairingFixture.self]
         let library=Library(transport:LimitedHTTP(configuration:config),loadPair:{nil},savePair:{_ in},removePair:{})
         library.setReading(true)
-        let code=PairingCode(app:"localshelf",version:2,address:"http://192.168.240.124:8088",token:PairingFixture.token,deviceId:PairingFixture.id)
+        let code=PairingCode(app:"localshelf",version:2,address:"http://192.168.1.124:8088",token:PairingFixture.token,deviceId:PairingFixture.id)
         await library.connect(code:code)
         pass(library.books.first?.id=="1" && PairingFixture.hosts().count==1,"verified connection seeds first page cache from network")
         await library.loadPage(1)

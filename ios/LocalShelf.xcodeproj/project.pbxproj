@@ -5,8 +5,6 @@
 	};
 	objectVersion = 56;
 	objects = {
-        F00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-        F00000000000000000000002 = {isa = PBXBuildFile; fileRef = F00000000000000000000001; };
         C00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderInteractionChecks.swift; sourceTree = "<group>"; };
         C00000000000000000000002 = {isa = PBXBuildFile; fileRef = C00000000000000000000001; };
         C00000000000000000000003 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ReaderInteractionChecks.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -18,6 +16,35 @@
         C00000000000000000000009 = {isa = PBXTargetDependency; target = A00000000000000000000005; };
 
 /* Begin PBXBuildFile section */
+        F00300000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+        F00300000000000000000002 = {isa = PBXBuildFile; fileRef = F00300000000000000000001; };
+        B43800000000000000000001 = {isa = PBXBuildFile; fileRef = B43800000000000000000002; };
+        B43800000000000000000003 = {isa = PBXBuildFile; fileRef = B43800000000000000000004; };
+        B43100000000000000000001 = {isa = PBXBuildFile; fileRef = B43100000000000000000002; };
+        B42900000000000000000001 = {isa = PBXBuildFile; fileRef = B42900000000000000000002; };
+        B42900000000000000000003 = {isa = PBXBuildFile; fileRef = B42900000000000000000004; };
+        B42700000000000000000001 = {isa = PBXBuildFile; fileRef = B42700000000000000000002; };
+        B42700000000000000000003 = {isa = PBXBuildFile; fileRef = B42700000000000000000004; };
+        B42600000000000000000001 = {isa = PBXBuildFile; fileRef = B42600000000000000000002; };
+        B42200000000000000000019 = {isa = PBXBuildFile; fileRef = B4220000000000000000001A; };
+        B42200000000000000000005 = {isa = PBXBuildFile; fileRef = B42200000000000000000006; };
+        B42200000000000000000007 = {isa = PBXBuildFile; fileRef = B42200000000000000000008; };
+        B42200000000000000000009 = {isa = PBXBuildFile; fileRef = B4220000000000000000000A; };
+        B4220000000000000000000B = {isa = PBXBuildFile; fileRef = B4220000000000000000000C; };
+        B4220000000000000000000D = {isa = PBXBuildFile; fileRef = B4220000000000000000000E; };
+        B4220000000000000000000F = {isa = PBXBuildFile; fileRef = B42200000000000000000010; };
+        B42200000000000000000011 = {isa = PBXBuildFile; fileRef = B42200000000000000000012; };
+        B42200000000000000000013 = {isa = PBXBuildFile; fileRef = B42200000000000000000014; };
+        B42200000000000000000015 = {isa = PBXBuildFile; fileRef = B42200000000000000000016; };
+        B42200000000000000000017 = {isa = PBXBuildFile; fileRef = B42200000000000000000018; };
+        B42200000000000000000001 = {isa = PBXBuildFile; fileRef = B42200000000000000000002; };
+        B42200000000000000000003 = {isa = PBXBuildFile; fileRef = B42200000000000000000004; };
+        F00000000000000000000011 = {isa = PBXBuildFile; fileRef = F00000000000000000000012; };
+        F00000000000000000000009 = {isa = PBXBuildFile; fileRef = F00000000000000000000010; };
+        F00000000000000000000007 = {isa = PBXBuildFile; fileRef = F00000000000000000000008; };
+        F00000000000000000000005 = {isa = PBXBuildFile; fileRef = F00000000000000000000006; };
+        F00000000000000000000003 = {isa = PBXBuildFile; fileRef = F00000000000000000000004; };
+        F00000000000000000000001 = {isa = PBXBuildFile; fileRef = F00000000000000000000002; };
         E00000000000000000000001 = {isa = PBXBuildFile; fileRef = E00000000000000000000002; };
         D00000000000000000000001 = {isa = PBXBuildFile; fileRef = D00000000000000000000002; };
         B00000000000000000000001 = {isa = PBXBuildFile; fileRef = B00000000000000000000002; };
@@ -26,6 +53,33 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        B43800000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionDiagnostics.swift; sourceTree = "<group>"; };
+        B43800000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticChecks.swift; sourceTree = "<group>"; };
+        B43100000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheEfficiencyChecks.swift; sourceTree = "<group>"; };
+        B42900000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimationPolicy.swift; sourceTree = "<group>"; };
+        B42900000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimationPolicyChecks.swift; sourceTree = "<group>"; };
+        B42700000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelatedShelf.swift; sourceTree = "<group>"; };
+        B42700000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelatedChecks.swift; sourceTree = "<group>"; };
+        B42600000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalUpdateChecks.swift; sourceTree = "<group>"; };
+        B4220000000000000000001A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionRecoveryChecks.swift; sourceTree = "<group>"; };
+        B42200000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Connection.swift; sourceTree = "<group>"; };
+        B42200000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageWorkQueues.swift; sourceTree = "<group>"; };
+        B4220000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
+        B4220000000000000000000C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimationPlayback.swift; sourceTree = "<group>"; };
+        B4220000000000000000000E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingCache.swift; sourceTree = "<group>"; };
+        B42200000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderPager.swift; sourceTree = "<group>"; };
+        B42200000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PositionControls.swift; sourceTree = "<group>"; };
+        B42200000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderView.swift; sourceTree = "<group>"; };
+        B42200000000000000000016 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfView.swift; sourceTree = "<group>"; };
+        B42200000000000000000018 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugAppContent.swift; sourceTree = "<group>"; };
+        B42200000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverPipelineBaseline.swift; sourceTree = "<group>"; };
+        B42200000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulationChecks.swift; sourceTree = "<group>"; };
+        F00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfUpdateChecks.swift; sourceTree = "<group>"; };
+        F00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestConditionalChecks.swift; sourceTree = "<group>"; };
+        F00000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderUpdateChecks.swift; sourceTree = "<group>"; };
+        F00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyCache.swift; sourceTree = "<group>"; };
+        F00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NASCacheChecks.swift; sourceTree = "<group>"; };
+        F00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentLibrary.swift; sourceTree = "<group>"; };
         E00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionAlternatives.swift; sourceTree = "<group>"; };
         D00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoverEnhancements.swift; sourceTree = "<group>"; };
         B00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -49,12 +103,39 @@
 		A00000000000000000000003 = {
 			isa = PBXGroup;
 			children = (
-				F00000000000000000000001,
+                F00300000000000000000001,
 				C00000000000000000000001,
 				A00000000000000000000006 /* LocalShelfApp.swift */,
 				A00000000000000000000007 /* LibraryModels.swift */,
                 D00000000000000000000002,
                 E00000000000000000000002,
+                F00000000000000000000002,
+                F00000000000000000000004,
+                F00000000000000000000006,
+                F00000000000000000000008,
+                F00000000000000000000010,
+                F00000000000000000000012,
+                B42200000000000000000002,
+                B42200000000000000000004,
+                B4220000000000000000001A,
+                B42600000000000000000002,
+                B42700000000000000000002,
+                B42700000000000000000004,
+                B42900000000000000000002,
+                B43100000000000000000002,
+                B43800000000000000000002,
+                B43800000000000000000004,
+                B42900000000000000000004,
+                B42200000000000000000006,
+                B42200000000000000000008,
+                B4220000000000000000000A,
+                B4220000000000000000000C,
+                B4220000000000000000000E,
+                B42200000000000000000010,
+                B42200000000000000000012,
+                B42200000000000000000014,
+                B42200000000000000000016,
+                B42200000000000000000018,
 				A00000000000000000000008 /* Info.plist */,
                 B00000000000000000000002,
 				A00000000000000000000004 /* Products */,
@@ -121,8 +202,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-                F00000000000000000000002,
                 B00000000000000000000001,
+                F00300000000000000000002,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -137,6 +218,33 @@
 				A00000000000000000000019 /* LibraryModels.swift in Sources */,
                 D00000000000000000000001,
                 E00000000000000000000001,
+                F00000000000000000000001,
+                F00000000000000000000003,
+                F00000000000000000000005,
+                F00000000000000000000007,
+                F00000000000000000000009,
+                F00000000000000000000011,
+                B42200000000000000000001,
+                B42200000000000000000003,
+                B42200000000000000000019,
+                B42600000000000000000001,
+                B42700000000000000000001,
+                B42700000000000000000003,
+                B42900000000000000000001,
+                B43100000000000000000001,
+                B43800000000000000000001,
+                B43800000000000000000003,
+                B42900000000000000000003,
+                B42200000000000000000005,
+                B42200000000000000000007,
+                B42200000000000000000009,
+                B4220000000000000000000B,
+                B4220000000000000000000D,
+                B4220000000000000000000F,
+                B42200000000000000000011,
+                B42200000000000000000013,
+                B42200000000000000000015,
+                B42200000000000000000017,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -171,13 +279,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 65;
                 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				MARKETING_VERSION = 0.4.13;
+				INFOPLIST_KEY_UILaunchScreen_Generation = NO;
+				MARKETING_VERSION = 0.4.38;
 				PRODUCT_BUNDLE_IDENTIFIER = local.shelf.reader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -189,13 +297,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 65;
                 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				MARKETING_VERSION = 0.4.13;
+				INFOPLIST_KEY_UILaunchScreen_Generation = NO;
+				MARKETING_VERSION = 0.4.38;
 				PRODUCT_BUNDLE_IDENTIFIER = local.shelf.reader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

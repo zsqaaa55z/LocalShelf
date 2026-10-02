@@ -1,0 +1,35 @@
+LocalShelf 阅读 — Android 0.1.2
+This is the independent Android reader, not EhViewer and not the uploader.
+
+Third-party binary dependencies are used without source modifications:
+
+AndroidX (The Android Open Source Project and contributors)
+https://android.googlesource.com/platform/frameworks/support/
+RecyclerView 1.4.0; ViewPager2 1.1.0; AndroidX Core 1.13.0;
+and their resolved AndroidX runtime dependencies (lifecycle, collection,
+annotation, activity, fragment, customview, viewpager, loader, savedstate,
+startup, profileinstaller, tracing, concurrent, interpolator, versionedparcelable).
+License: Apache License 2.0.
+
+Kotlin standard library 1.8.22 and Kotlin Coroutines 1.6.4
+(JetBrains and contributors)
+https://github.com/JetBrains/kotlin
+https://github.com/Kotlin/kotlinx.coroutines
+License: Apache License 2.0.
+
+JetBrains IntelliJ annotations 13.0 (JetBrains Team)
+https://github.com/JetBrains/intellij-community
+License: Apache License 2.0.
+
+Guava ListenableFuture 1.0 (Google and contributors)
+https://github.com/google/guava
+License: Apache License 2.0.
+
+The full Apache License 2.0 is supplied alongside this notice.
+Original embedded dependency metadata is retained in the APK.
+The Android operating system supplies ImageDecoder and AnimatedImageDrawable;
+this APK does not bundle a separate GIF/WebP decoder or a copy of EhViewer.
+
+All library and reading images belong to their respective rights holders.
+The app only reads files from the NAS selected by the user. It does not provide
+content, modify the source library, or grant rights to third-party material.

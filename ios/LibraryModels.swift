@@ -11,8 +11,22 @@ struct TransferBuffer {
     func acceptsLength(_ length:Int64)->Bool {length<0 || length<=Int64(limit)}
 }
 
+enum PageJumpRules {
+    static func index(_ text:String,count:Int)->Int? {
+        let value=text.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard count>0,!value.isEmpty,value.count<=7,value.allSatisfy({"0123456789".contains($0)}),let number=Int(value),(1...count).contains(number) else{return nil}
+        return number-1
+    }
+    static func nearby(current:Int,count:Int)->[Int] {
+        guard count>0 else{return []}
+        let page=PagingRules.index(current,count:count)
+        return Array(Set([0,page-1,page,page+1,count-1].filter{(0..<count).contains($0)})).sorted()
+    }
+}
+
 enum ReadingBudget {
     static let normal=64*1024*1024
+    static let largeAnimation=96*1024*1024 // current large animation only; normal reading unchanged
     static let pressure=24*1024*1024
     static let compressed=8*1024*1024
     static func keep(costs:[Int:Int],priority:[Int],available:Int)->Set<Int> {
@@ -45,8 +59,9 @@ struct CostLRU<Key:Hashable,Value> {
     mutating func remove(_ key:Key){if let old=entries.removeValue(forKey:key){cost-=old.1};order.removeAll{$0==key}}
 }
 
+enum MediaDiskBudget {static let total=2_000_000_000,body=512_000_000;static let covers=total-body}
 enum CoverRules {
-    static let diskBudget=2_000_000_000
+    static let diskBudget=MediaDiskBudget.covers
     static func key(scope:String,path:String)->String? {
         guard path.range(of:"^/v1/books/[0-9]{1,20}/cover$",options:.regularExpression) != nil else{return nil}
         return SHA256.hash(data:Data(("cover-v1\n"+scope+"\n"+path).utf8)).map{String(format:"%02x",$0)}.joined()
@@ -80,13 +95,12 @@ enum PagingRules {
     }
     static func swipeStep(x:Double,y:Double,width:Double,velocityX:Double=0)->Int {
         guard width>0,width.isFinite,x.isFinite,y.isFinite,velocityX.isFinite,abs(x)>abs(y)*1.5 else{return 0}
-        // A deliberate short flick counts; a last-moment reversal returns to the
-        // current page instead of jumping across it into the opposite neighbor.
-        if abs(velocityX)>=650,abs(x)>=12 {
-            if x*velocityX<0{return 0}
-            return velocityX<0 ? 1 : -1
-        }
-        guard abs(x)>=min(40,width*0.1) else{return 0}
+        // A bounded projection avoids the old 649/650 pt/s all-or-nothing gate.
+        // Minimum travel still rejects taps/jitter; a clear reversal cancels.
+        guard abs(x)>=12 else{return 0}
+        if x*velocityX<0,abs(velocityX)>=150{return 0}
+        let projected=abs(x)+(x*velocityX>0 ? min(2000,abs(velocityX))*0.08 : 0)
+        guard projected>=min(40,width*0.1) else{return 0}
         return x<0 ? 1 : -1
     }
     static func prefetchIndices(current:Int,count:Int,direction:Int=1)->[Int] {
@@ -96,6 +110,97 @@ enum PagingRules {
     }
     static func count(total:Int,size:Int)->Int {max(1,(max(0,total)+max(1,size)-1)/max(1,size))}
     static func index(_ target:Int,count:Int)->Int {min(max(0,target),max(0,count-1))}
+}
+
+// Touch timestamps, not display frames: bounded to 32 samples / about 100 ms.
+// Keep this independent of UIKit so slow lift-off, pauses and reversals can be
+// tested using the same release estimator that the actual recognizer uses.
+struct ReaderSwipeMotion {
+    struct Release {
+        let velocityX:Double
+        let reversed:Bool
+        let paused:Bool
+    }
+    private var samples:[(x:Double,time:Double)]=[]
+    private var lastMovement:Double=0
+    var sampleCount:Int{samples.count}
+    mutating func reset(time:Double){
+        samples.removeAll(keepingCapacity:true);lastMovement=time
+        record(x:0,time:time)
+    }
+    mutating func record(x:Double,time:Double){
+        guard x.isFinite,time.isFinite else{return}
+        if let last=samples.last {
+            guard time>last.time else{return}
+            if abs(x-last.x)>=0.25{lastMovement=time}
+        }else{lastMovement=time}
+        samples.append((x,time))
+        while samples.count>2,samples[1].time<time-0.1{samples.removeFirst()}
+        if samples.count>32{samples.removeFirst(samples.count-32)}
+    }
+    func release(fallbackVelocity:Double)->Release {
+        let fallback=fallbackVelocity.isFinite ? max(-2000,min(2000,fallbackVelocity)) : 0
+        guard let first=samples.first,let last=samples.last,samples.count>=2 else{
+            return Release(velocityX:fallback,reversed:false,paused:false)
+        }
+        let paused=last.time-lastMovement>=0.08
+        // Interpolate the window boundary instead of including an old point
+        // from a long initial hold. A pause must not retain a stale fast flick.
+        let start=max(first.time,last.time-0.1)
+        var startX=first.x
+        if samples.count>1,first.time<start {
+            let next=samples[1]
+            startX=first.x+(next.x-first.x)*min(1,max(0,(start-first.time)/(next.time-first.time)))
+        }
+        let elapsed=last.time-start
+        let recent=elapsed>=0.004 ? (last.x-startX)/elapsed : fallback
+        let minimum=samples.map(\.x).min() ?? last.x,maximum=samples.map(\.x).max() ?? last.x
+        let reversed=(last.x<0 && last.x-minimum>=6) || (last.x>0 && maximum-last.x>=6)
+        // Do not use the peak speed: it would turn an intentional stop into a
+        // page advance. Tiny opposite lift-off noise doesn't cancel a flick.
+        let terminalReversal=last.x*fallback<0 && abs(fallback)>=150
+        return Release(velocityX:paused ? 0 : max(-2000,min(2000,recent)),reversed:reversed || (!paused && terminalReversal),paused:paused)
+    }
+}
+
+// Scheduling only: never changes gesture thresholds, page selection or animation.
+struct ReadingPrefetchPolicy {
+    private(set) var lastIndex:Int?
+    private var lastMove:TimeInterval?
+    private var streak=0
+    private(set) var rapidUntil:TimeInterval=0
+    static let settleDelay:TimeInterval=0.45
+    mutating func moved(to index:Int,now:TimeInterval){
+        defer{lastIndex=index}
+        guard let previous=lastIndex,previous != index else{return}
+        let fast=lastMove.map{now >= $0 && now-$0<0.28} ?? false
+        streak=fast ? streak+1:1
+        if streak>=2 || abs(index-previous)>1{rapidUntil=now+Self.settleDelay}
+        lastMove=now
+    }
+    func rapid(now:TimeInterval)->Bool{now<rapidUntil}
+    func indices(current:Int,count:Int,direction:Int,thermal:Int,pressure:Bool,now:TimeInterval)->[Int]{
+        guard (0..<max(0,count)).contains(current) else{return []}
+        let all=PagingRules.prefetchIndices(current:current,count:count,direction:direction)
+        if pressure || thermal>=3{return Array(all.prefix(1))}
+        if thermal>=2{return Array(all.prefix(2))}
+        if rapid(now:now){let step=direction<0 ? -1:1;return [current,current+step,current+step*2].filter{(0..<count).contains($0)}}
+        return all
+    }
+    func animationIndices(current:Int,count:Int,direction:Int,thermal:Int,pressure:Bool,now:TimeInterval)->[Int]{
+        guard (0..<max(0,count)).contains(current) else{return []}
+        let all=PagingRules.prefetchIndices(current:current,count:count,direction:direction)
+        return Array(all.prefix(pressure || thermal>=2 ? 1:(rapid(now:now) ? 2:3)))
+    }
+}
+
+enum CoverRequest {
+    static func path(_ path:String,pixels:Int,thumbnails:Bool)->String? {
+        guard path.range(of:"^/v1/books/[0-9]{1,20}/cover$",options:.regularExpression) != nil else{return nil}
+        guard thumbnails else{return path}
+        let width=pixels<=320 ? 320:(pixels<=480 ? 480:640)
+        return path+"?width=\(width)"
+    }
 }
 
 enum ReadingProgress {
@@ -120,12 +225,6 @@ enum ReadingProgress {
     static func save(_ page:Int,scope:String?,id:String,in defaults:UserDefaults = .standard){
         guard let scope,page>0,page<=99_999_999,id.range(of:"^[0-9]{1,20}$",options:.regularExpression) != nil else{return}
         defaults.set(scope,forKey:"reading.scope."+hash(scope));defaults.set(page,forKey:key(scope:scope,id:id))
-    }
-    static func positions(scope:String,in defaults:UserDefaults = .standard)->[String:Int]{
-        let prefix="reading.page."+hash(scope)+"."
-        return defaults.dictionaryRepresentation().reduce(into:[:]){result,item in
-            if item.key.hasPrefix(prefix),let page=item.value as? Int,page>0{result[String(item.key.dropFirst(prefix.count))]=page}
-        }
     }
     // Only keys owned by the reader; never clear the defaults domain or pairing.
     static func reset(in defaults:UserDefaults = .standard)->Int {
@@ -165,70 +264,100 @@ struct RecentReading:Codable,Equatable {
     static func clear(in defaults:UserDefaults = .standard){for name in defaults.dictionaryRepresentation().keys where name==key || name.hasPrefix(key+"."){defaults.removeObject(forKey:name)}}
 }
 
+enum ShelfSource:String,CaseIterable,Identifiable {
+    case eh,manual
+    var id:String{rawValue}
+    var title:String{self == .eh ? "Eh 同步":"手动上传"}
+    static let manualPolicy="manual-import-newest-first-v1"
+    static var selected:Self{Self(rawValue:UserDefaults.standard.string(forKey:"shelf.source") ?? "") ?? .eh}
+    func path(_ logical:String,target:ServerTarget)->String {
+        target == .nas && self == .manual && logical.hasPrefix("/v1/") ? "/manual"+logical:logical
+    }
+    func accepts(_ list:BookList)->Bool{self == .manual ? list.orderPolicy==Self.manualPolicy:list.orderPolicy != Self.manualPolicy}
+}
+
 enum ServerTarget:String,CaseIterable,Identifiable {
     case android,nas
     var id:String{rawValue}
     var title:String{self == .android ? "安卓桥接":"NAS 书库"}
-    var other:Self{self == .android ? .nas:.android}
     static var selected:Self{Self(rawValue:UserDefaults.standard.string(forKey:"server.selected") ?? "") ?? .android}
-}
-
-// Whitelisted reading metadata only. No credentials, server addresses or images.
-struct ProgressBackup:Codable {
-    struct Library:Codable {let scope:String;let positions:[String:Int];let recent:RecentReading?}
-    let version:Int
-    let libraries:[Library]
-    let legacy:[String:Int]
-    static func capture(in defaults:UserDefaults = .standard)->Self {
-        var scopes=Set(defaults.dictionaryRepresentation().filter{$0.key.hasPrefix("reading.scope.")}.compactMap{$0.value as? String})
-        if let old=defaults.data(forKey:RecentReading.key),old.count<=32768,let recent=try? JSONDecoder().decode(RecentReading.self,from:old),recent.valid{scopes.insert(recent.scope)}
-        let libraries=scopes.sorted().map{Library(scope:$0,positions:ReadingProgress.positions(scope:$0,in:defaults),recent:RecentReading.load(scope:$0,in:defaults))}
-        let legacy=defaults.dictionaryRepresentation().reduce(into:[String:Int]()){result,item in
-            if item.key.range(of:"^page\\.[0-9]{1,20}$",options:.regularExpression) != nil,let page=item.value as? Int{result[String(item.key.dropFirst(5))]=page}
-        }
-        return Self(version:1,libraries:libraries,legacy:legacy)
-    }
-    func data()throws->Data{let data=try JSONEncoder().encode(self);_ = try Self.decode(data);return data}
-    static func decode(_ data:Data)throws->Self {
-        guard data.count<=8*1024*1024 else{throw LibraryError.malformed}
-        let value=try JSONDecoder().decode(Self.self,from:data)
-        guard value.version==1,value.libraries.count<=32,Set(value.libraries.map(\.scope)).count==value.libraries.count,
-              value.libraries.reduce(value.legacy.count,{$0+$1.positions.count})<=40000 else{throw LibraryError.malformed}
-        func valid(_ records:[String:Int])->Bool{records.allSatisfy{$0.key.range(of:"^[0-9]{1,20}$",options:.regularExpression) != nil && (1...99_999_999).contains($0.value)}}
-        guard valid(value.legacy),value.libraries.allSatisfy({!$0.scope.isEmpty && $0.scope.utf8.count<=256 && valid($0.positions) && ($0.recent==nil || ($0.recent!.valid && $0.recent!.scope==$0.scope))}) else{throw LibraryError.malformed}
-        return value
-    }
-    // Import is additive: existing positions always win; explicit server migration
-    // is a separate operation after IDs have been checked against the destination.
-    @discardableResult func restore(in defaults:UserDefaults = .standard)->Int {
-        var count=0
-        for library in libraries {
-            defaults.set(library.scope,forKey:"reading.scope."+ReadingProgress.hash(library.scope))
-            for (id,page) in library.positions where ReadingProgress.page(scope:library.scope,id:id,in:defaults)==0{ReadingProgress.save(page,scope:library.scope,id:id,in:defaults);count+=1}
-            if let recent=library.recent,RecentReading.load(scope:library.scope,in:defaults)==nil{recent.save(in:defaults)}
-        }
-        for (id,page) in legacy where defaults.object(forKey:"page."+id)==nil{defaults.set(page,forKey:"page."+id);count+=1}
-        return count
-    }
 }
 
 struct ReaderService:Decodable {
     let app:String;let version:Int;let serverKind:String;let capabilities:[String]
     var compatible:Bool{app=="localshelf-reader" && version==1 && serverKind=="nas" && ["reader-v1","pair-v2","locate-v1"].allSatisfy{capabilities.contains($0)}}
+    var passwordPairing:Bool{compatible && capabilities.contains("password-pair-v1")}
+    var thumbnails:Bool{compatible && capabilities.contains("cover-thumbnail-v1")}
+    var pageManifests:Bool{compatible && capabilities.contains("page-manifest-v1")}
+    var conditionalManifests:Bool{pageManifests && capabilities.contains("conditional-manifest-v1")}
+    var catalogWindows:Bool{compatible && capabilities.contains("catalog-window-v1")}
+    func related(_ kind:RelatedKind)->Bool{compatible && capabilities.contains(kind == .authors ? "author-discovery-v1":"series-discovery-v1")}
+}
+// Only fixed, recognized response codes are shown. Never display a server's
+// arbitrary error text or infer content changes from a generic network failure.
+enum PageReadFailure:Error,Equatable {
+    case network,busy,changed,missing,invalid,authorization,other
+    static func header(status:Int,code:String?)->Self? {
+        switch (status,code ?? "") {
+        case (412,"page_content_changed"):return .changed
+        case (404,"image_missing"),(404,"file_unavailable"),(404,"book_not_in_published_catalog"):return .missing
+        case (409,"image_updating"),(409,"image_updating_or_too_large"):return .invalid
+        case (503,"reader_busy"),(503,"verification_busy"),(503,"verification_timeout"):return .busy
+        default:return nil
+        }
+    }
+    static func classify(_ error:Error)->Self {
+        if let known=error as? Self{return known}
+        if let url=error as? URLError {
+            return [.notConnectedToInternet,.networkConnectionLost,.cannotConnectToHost,.timedOut,.cannotFindHost].contains(url.code) ? .network:.other
+        }
+        if case ServerFailure.status(let status)=error {
+            switch status{case 401,403:return .authorization;case 404:return .missing;case 502,503,504:return .busy;default:return .other}
+        }
+        if case LibraryError.unsafeAddress=error{return .network}
+        if error is LibraryError{return .invalid}
+        return .other
+    }
+    var automaticRetry:Bool{self == .network || self == .busy}
+    var title:String {
+        switch self{case .changed:return "本页内容已更新";case .missing:return "本页文件缺失";case .invalid:return "本页文件尚不可安全读取";case .authorization:return "阅读授权已失效";default:return "本页暂时无法加载"}
+    }
+    var message:String {
+        switch self {
+        case .network:return "检查 Wi-Fi 和书库连接 · 点击重试本页"
+        case .busy:return "服务暂忙 · 稍后点此重试本页"
+        case .changed:return "正在核对页码；仍失败时可在阅读选项刷新"
+        case .missing:return "请检查同步是否完成；文件补齐后点此重试"
+        case .invalid:return "文件可能在更新、损坏或格式不支持；不会循环重试"
+        case .authorization:return "请返回设置重新连接书库"
+        case .other:return "点此重试本页 · 不会清空已加载的邻页"
+        }
+    }
 }
 struct LocatedBook:Decodable {let id:String;let offset:Int;let catalogRevision:String;let libraryId:String}
 enum ServerFailure:Error,LocalizedError {
-    case status(Int), incompatible
+    case status(Int), incompatible, passwordRequired, passwordUnsupported, manualUnsupported
     var errorDescription:String? {
         switch self {
         case .incompatible:return "不是兼容的 NAS 阅读服务。备份上传端口 8443 不能用于阅读，请使用阅读服务地址。"
+        case .manualUnsupported:return "NAS 尚未开启手动书库。请先更新并启用服务；Eh 同步书库仍可从首页顶部切回。"
+        case .passwordRequired:return "此 NAS 已使用固定密码，请在密码输入框连接，不再使用六位码。"
+        case .passwordUnsupported:return "此 NAS 尚未开启固定密码，请先更新阅读服务并设置密码，或使用旧版六位码入口。"
         case .status(401):return "阅读凭据已失效，请重新配对。"
         case .status(403):return "配对码错误或已失效，请重新生成六位码。"
         case .status(404):return "服务接口或文件不存在，请确认阅读服务地址。"
         case .status(409):return "清单或文件正在变化，暂不能安全读取，请稍后重试。"
+        case .status(429):return "密码连续输错次数过多，请等待 15 分钟后再试；已连接设备不受影响。"
         case .status(503):return "书库尚未发布，或存储暂不可用。请等待迁移完成并检查服务状态。"
         default:return "阅读服务响应异常，请稍后重试。"
         }
+    }
+}
+
+enum NASPassword {
+    static func body(_ input:String)throws->Data {
+        guard (8...128).contains(input.utf8.count),!input.unicodeScalars.contains(where:{$0.value<32 || $0.value==127}) else{throw LibraryError.malformed}
+        return Data(input.utf8)
     }
 }
 
@@ -302,8 +431,111 @@ enum PairingProof {
     }
 }
 
-struct Book: Codable, Identifiable, Equatable { let id: String; let title: String; let rank: Int; var available: Bool? = nil; var coverIdentity:String? = nil; var isMissing: Bool { available == false } }
+struct Book: Codable, Identifiable, Equatable {
+    let id:String;let title:String;let rank:Int
+    var available:Bool?=nil;var coverIdentity:String?=nil;var pageCount:Int?=nil
+    var isMissing:Bool{available == false}
+    // Old Android/NAS lists and saved library snapshots may omit pageCount.
+    // A count is the number of indexed pages, not the largest filename or GIF frames.
+    var pageCountLabel:String?{guard !isMissing,let pageCount,(1...20000).contains(pageCount) else{return nil};return String(pageCount)}
+}
 struct BookList: Codable { let orderVerified: Bool; let total: Int; let books: [Book]; var orderPolicy: String? = nil; var catalogRevision:String? = nil; var libraryId:String? = nil }
+enum RelatedKind:String,Codable,CaseIterable {
+    case authors,series
+    var title:String{self == .authors ? "同作者漫画":"同系列作品"}
+    var action:String{"查看"+title}
+    var empty:String{self == .authors ? "暂未识别作者":"暂未找到同系列作品"}
+    var explanation:String{self == .authors ? "按署名、明确别名及同本日英文对应关联；写法变体、署名线索和同社团作品为可能匹配，不代表作者身份已确认。":"优先按同一创作者的作品名、卷篇和番外关联；标题变体、作者线索和目录补充会标记为可能匹配。同作不同版本不代表续篇，不按共同原作/IP 合并。"}
+}
+enum RelatedMatchNote:String,Codable {
+    case nameVariant,circle,creditName,workCredit,seriesTitle,seriesSubtitle,seriesVariant,authorSeries,directory,edition
+    var label:String {
+        switch self {
+        case .nameVariant:return "写法相近"
+        case .circle:return "同社团待确认"
+        case .creditName:return "署名待确认"
+        case .workCredit:return "同作署名线索"
+        case .seriesVariant:return "标题写法相近"
+        case .authorSeries:return "作者与系列线索"
+        case .seriesTitle:return "同名待确认"
+        case .seriesSubtitle:return "副标题关联"
+        case .directory:return "目录名关联"
+        case .edition:return "同作不同版本"
+        }
+    }
+    var explanation:String{
+        switch self {
+        case .creditName:return "署名区域出现已知作者完整名字，格式或角色待确认"
+        case .workCredit:return "同作品不同语言版本出现不同署名，作者对应待确认"
+        case .authorSeries:return "作者写法或署名线索相符，主标题与卷篇线索支持关联，仍待确认"
+        case .seriesVariant:return "主标题格式或少量文字相近，系列关系待确认"
+        case .circle:return "同社团，作者待确认"
+        default:return label
+        }
+    }
+    func valid(for kind:RelatedKind)->Bool{let author=self == .nameVariant || self == .circle || self == .creditName || self == .workCredit;return kind == .authors ? author:!author}
+}
+struct RelatedChoice:Codable,Identifiable,Equatable {
+    let id:String,name:String,matchKind:String,count:Int
+    var aliases:[String]?=nil
+    var possibleCount:Int?=nil
+    var evidenceVersion:Int?=nil
+    func validate(kind:RelatedKind)throws {
+        guard id.range(of:"\\A[a-f0-9]{64}\\z",options:.regularExpression) != nil,
+              !name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,name.utf8.count<=768,
+              name.unicodeScalars.allSatisfy({!CharacterSet.controlCharacters.contains($0)}),
+              (1...20000).contains(count),
+              (kind == .authors ? ["artist","name"]:["series"]).contains(matchKind),
+              evidenceVersion == nil || evidenceVersion == 3,
+              evidenceVersion == 3 ? (possibleCount != nil && (0...count).contains(possibleCount!)) : (possibleCount == nil || (kind == .authors && (0..<count).contains(possibleCount!))),
+              (aliases?.count ?? 0)<=8,aliases?.allSatisfy({!$0.isEmpty && $0.utf8.count<=768 && $0.unicodeScalars.allSatisfy{!CharacterSet.controlCharacters.contains($0)}}) != false else{throw LibraryError.malformed}
+    }
+}
+struct RelatedOptions:Codable {
+    let bookID:String,kind:RelatedKind,libraryId:String,catalogRevision:String,options:[RelatedChoice]
+    func validate(book:String,kind:RelatedKind,library:String)throws {
+        guard bookID==book,self.kind==kind,libraryId==library,
+              catalogRevision.range(of:"\\A[a-f0-9]{64}\\z",options:.regularExpression) != nil,
+              options.count<=8,Set(options.map(\.id)).count==options.count else{throw LibraryError.malformed}
+        for option in options{try option.validate(kind:kind)}
+    }
+}
+struct RelatedResult:Codable {
+    let bookID:String,kind:RelatedKind,option:RelatedChoice,offset:Int,catalog:BookList
+    var possibleBookIDs:[String]?=nil
+    var partLabels:[String:String]?=nil
+    var matchNotes:[String:RelatedMatchNote]?=nil
+    func validate(book:String,kind:RelatedKind,choice:String,size:Int,requestedOffset:Int,library:String)throws {
+        try option.validate(kind:kind)
+        guard bookID==book,self.kind==kind,option.id==choice,catalog.libraryId==library,
+              catalog.catalogRevision != nil,catalog.orderVerified,catalog.total==option.count,
+              (50...500).contains(size),size%50==0,requestedOffset>=0,requestedOffset%size==0,
+              offset==min(requestedOffset,(max(1,catalog.total)-1)/size*size) else{throw LibraryError.malformed}
+        try CatalogPageCache.validate(catalog,page:offset/size,size:size)
+        if let possibleCount=option.possibleCount {
+            guard (kind == .authors || option.evidenceVersion == 3),let ids=possibleBookIDs,ids.count<=size,Set(ids).count==ids.count,
+                  (option.evidenceVersion == 3 || !ids.contains(bookID)),Set(ids).isSubset(of:Set(catalog.books.map(\.id))),
+                  ids.count<=possibleCount,catalog.books.count-ids.count<=catalog.total-possibleCount else{throw LibraryError.malformed}
+        }else if possibleBookIDs != nil{throw LibraryError.malformed}
+        if option.evidenceVersion == 3 {
+            guard let notes=matchNotes,let ids=possibleBookIDs,notes.count<=size,
+                  Set(notes.keys)==Set(ids),notes.values.allSatisfy({$0.valid(for:kind)}),
+                  kind != .authors || !ids.contains(bookID) || notes[bookID] == .circle || notes[bookID] == .creditName else{throw LibraryError.malformed}
+        }else if matchNotes != nil{throw LibraryError.malformed}
+        if let parts=partLabels {
+            guard kind == .series,parts.count<=size,Set(parts.keys).isSubset(of:Set(catalog.books.map(\.id))),
+                  parts.values.allSatisfy({!$0.isEmpty && $0.utf8.count<=384 && $0.unicodeScalars.allSatisfy{!CharacterSet.controlCharacters.contains($0)}}) else{throw LibraryError.malformed}
+        }
+    }
+}
+struct CatalogWindow:Decodable {
+    let offset:Int,anchor:String?,catalog:BookList
+    func validated(size:Int,requestedAnchor:String,library:String?)throws->CatalogPageCache.ValidatedPage {
+        guard (50...500).contains(size),size%50==0,offset>=0,offset%size==0,offset<max(1,catalog.total),catalog.libraryId==library,
+              anchor==nil || (anchor==requestedAnchor && catalog.books.contains(where:{$0.id==anchor})) else{throw LibraryError.malformed}
+        return try CatalogPageCache.validated(catalog,page:offset/size,size:size)
+    }
+}
 // Disposable, session-only metadata. TTL is measured from network receipt, not hits.
 struct CatalogPageCache {
     // Only the validating factory can construct this value. Production callers
@@ -343,15 +575,23 @@ struct CatalogPageCache {
         let age=now.timeIntervalSince(entry.received);return age>=0 && age<60 ? entry.list:nil
     }
 }
-struct Page: Codable, Identifiable { let number: Int; var id: Int { number } }
-struct Pages: Codable { let pages: [Page] }
+struct Page: Codable, Identifiable {
+    let number:Int;let sha256:String?;let size:Int?
+    init(number:Int,sha256:String?=nil,size:Int?=nil){self.number=number;self.sha256=sha256;self.size=size}
+    var id:Int{number}
+}
+struct Pages: Codable {
+    let pages:[Page];let id:String?;let libraryId:String?;let contentRevision:String?
+    init(pages:[Page],id:String?=nil,libraryId:String?=nil,contentRevision:String?=nil){self.pages=pages;self.id=id;self.libraryId=libraryId;self.contentRevision=contentRevision}
+}
 // Page numbers only; no image data. Scope is established by a verified library.
 struct PageListCache {
     struct Validated {
         let value:Pages
         fileprivate init(_ value:Pages){self.value=value}
     }
-    private struct Entry {let value:Pages,date:Date}
+    struct Candidate {let value:Validated,etag:String}
+    private struct Entry {let validated:Validated,date:Date,etag:String?;var value:Pages{validated.value}}
     private var values=CostLRU<String,Entry>(budget:1024*1024,countLimit:16)
     private var scope:String?
     var cost:Int{values.cost}
@@ -359,16 +599,30 @@ struct PageListCache {
     mutating func clear(){values.removeAll()}
     mutating func invalidate(_ book:String){values.remove(book)}
     static func validated(_ value:Pages)throws->Validated{try LibraryRules.validate(value);return Validated(value)}
-    @discardableResult mutating func store(_ value:Validated,book:String,now:Date=Date())->Bool {
+    @discardableResult mutating func store(_ value:Validated,book:String,now:Date=Date(),etag:String?=nil)->Bool {
         invalidate(book)
         guard scope != nil,!value.value.pages.isEmpty,value.value.pages.count<=20000 else{return false}
-        values.insert(Entry(value:value.value,date:now),for:book,cost:256+value.value.pages.count*16);return true
+        let cost=256+value.value.pages.count*(value.value.contentRevision == nil ? 16:240)
+        guard cost<=1024*1024 else{return false}
+        values.insert(Entry(validated:value,date:now,etag:etag),for:book,cost:cost);return true
     }
     mutating func value(_ book:String,now:Date=Date())->Pages? {
         guard scope != nil,let entry=values.value(for:book) else{return nil}
         let age=now.timeIntervalSince(entry.date)
-        guard age>=0,age<15 else{invalidate(book);return nil};return entry.value
+        guard age>=0 else{invalidate(book);return nil}
+        guard age<15 else{return nil};return entry.value
     }
+    mutating func candidate(_ book:String,now:Date=Date())->Candidate? {
+        guard scope != nil,let entry=values.value(for:book) else{return nil}
+        let age=now.timeIntervalSince(entry.date)
+        guard age>=0,age<24*3600 else{invalidate(book);return nil}
+        guard let etag=entry.etag,ManifestValidator.valid(etag),entry.value.contentRevision != nil else{return nil}
+        // A stale representation is ONLY usable after a fresh authenticated 304.
+        return Candidate(value:entry.validated,etag:etag)
+    }
+}
+enum ManifestValidator {
+    static func valid(_ etag:String)->Bool{etag.range(of:"\\A\"[a-f0-9]{64}\"\\z",options:.regularExpression) != nil}
 }
 // Serial CPU parsing, distinct from MainActor and image decoding. No detached
 // per-request tasks: queued work inherits cancellation and checks it before use.
@@ -394,6 +648,21 @@ actor MetadataParser {
         let validated=try CatalogPageCache.validated(value,page:page,size:size)
         try Task.checkCancellation();return validated
     }
+    func window(_ data:Data,size:Int,anchor:String,library:String?)throws->(CatalogWindow,CatalogPageCache.ValidatedPage) {
+        try begin(data)
+        let window=try JSONDecoder().decode(CatalogWindow.self,from:data)
+        let validated=try window.validated(size:size,requestedAnchor:anchor,library:library)
+        try Task.checkCancellation();return (window,validated)
+    }
+    func relatedOptions(_ data:Data,book:String,kind:RelatedKind,library:String)throws->RelatedOptions {
+        try begin(data);let value=try JSONDecoder().decode(RelatedOptions.self,from:data)
+        try value.validate(book:book,kind:kind,library:library);try Task.checkCancellation();return value
+    }
+    func relatedResult(_ data:Data,book:String,kind:RelatedKind,choice:String,size:Int,offset:Int,library:String)throws->RelatedResult {
+        try begin(data);let value=try JSONDecoder().decode(RelatedResult.self,from:data)
+        try value.validate(book:book,kind:kind,choice:choice,size:size,requestedOffset:offset,library:library)
+        try Task.checkCancellation();return value
+    }
     func pages(_ data:Data)throws->Pages {
         try preparedPages(data).value
     }
@@ -403,12 +672,21 @@ actor MetadataParser {
         try Task.checkCancellation();let validated=try PageListCache.validated(value)
         try Task.checkCancellation();return validated
     }
+    func preparedManifest(_ data:Data,etag:String?)throws->PageListCache.Validated {
+        try Task.checkCancellation()
+        guard data.count<=8*1024*1024 else{throw LibraryError.malformed}
+        if let etag {
+            guard ManifestValidator.valid(etag),etag=="\""+SHA256.hash(data:data).map({String(format:"%02x",$0)}).joined()+"\"" else{throw LibraryError.malformed}
+        }
+        return try preparedPages(data)
+    }
 }
 enum LibraryError: Error { case unverifiedOrder, malformed, unsafeAddress }
 enum LibraryRules {
     static func validate(_ list: BookList) throws {
         if let library=list.libraryId,library.utf8.count != 64 || library.range(of:"^[a-f0-9]{64}$",options:.regularExpression)==nil{throw LibraryError.malformed}
         for book in list.books {if let identity=book.coverIdentity,identity.utf8.count != 64 || identity.range(of:"^[a-f0-9]{64}$",options:.regularExpression)==nil{throw LibraryError.malformed}}
+        for book in list.books {if let count=book.pageCount,!(0...20000).contains(count){throw LibraryError.malformed}}
         if let revision=list.catalogRevision,revision.range(of:"^[a-f0-9]{64}$",options:.regularExpression)==nil{throw LibraryError.malformed}
         guard list.orderVerified || list.orderPolicy == "snapshot-query" else { throw LibraryError.unverifiedOrder }
         guard list.total >= list.books.count, Set(list.books.map(\.id)).count == list.books.count,
@@ -418,6 +696,12 @@ enum LibraryRules {
     }
     static func validate(_ pages: Pages) throws {
         guard pages.pages.allSatisfy({$0.number > 0}), zip(pages.pages,pages.pages.dropFirst()).allSatisfy({$0.number < $1.number}) else { throw LibraryError.malformed }
+        let manifest=pages.contentRevision != nil || pages.libraryId != nil || pages.id != nil || pages.pages.contains{$0.sha256 != nil || $0.size != nil}
+        if manifest {
+            func hash(_ value:String?)->Bool{value?.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil}
+            guard pages.pages.count<=20000,hash(pages.contentRevision),hash(pages.libraryId),pages.id?.range(of:"^[1-9][0-9]{0,18}$",options:.regularExpression) != nil,
+                  pages.pages.allSatisfy({hash($0.sha256) && ($0.size ?? -1)>=0}) else{throw LibraryError.malformed}
+        }
     }
     static func address(_ text: String) throws -> URL {
         guard let url=URL(string:text), url.scheme=="http",url.user==nil,url.password==nil,url.query==nil,url.fragment==nil,

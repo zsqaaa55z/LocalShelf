@@ -1,0 +1,3 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries><provider android:authorities="local.shelf.sync.test.documents" /></queries>
+</manifest>

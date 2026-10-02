@@ -1,0 +1,29 @@
+# Independent project; does not recreate Reader or Sync. Set .env before use.
+services:
+  localshelf-web:
+    build: .
+    image: localshelf-web:0.1.1-dev
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    cpus: 1.0
+    pids_limit: 64
+    environment:
+      READER_UPSTREAM: "${READER_UPSTREAM:?NAS existing reader origin, internal only}"
+      WEB_ORIGIN: "${WEB_ORIGIN:?Exact browser origin, no trailing path}"
+      WEB_BASE_PATH: "${WEB_BASE_PATH:-/}"
+      WEB_ALLOWED_HOSTS: "${WEB_ALLOWED_HOSTS:-}"
+    ports:
+      - "${WEB_BIND_IP:?NAS LAN IPv4 or 127.0.0.1}:8090:8090"
+    healthcheck:
+      test: [CMD, python, -c, "import os,urllib.request,urllib.parse,json; r=urllib.request.Request('http://127.0.0.1:8090'+os.environ.get('WEB_BASE_PATH','/')+'readyz',headers={'Host':urllib.parse.urlsplit(os.environ['WEB_ORIGIN']).netloc}); assert json.load(urllib.request.urlopen(r,timeout=3)).get('ready') is True"]
+      interval: 60s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: "2m", max-file: "2"}

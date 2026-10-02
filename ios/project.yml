@@ -11,9 +11,35 @@ targets:
       - path: LibraryModels.swift
       - path: CoverEnhancements.swift
       - path: InteractionAlternatives.swift
-      - path: Assets.xcassets
+      - path: PersistentLibrary.swift
+      - path: NASCacheChecks.swift
+      - path: BodyCache.swift
+      - path: CacheEfficiencyChecks.swift
+      - path: ReaderUpdateChecks.swift
+      - path: ManifestConditionalChecks.swift
+      - path: ShelfUpdateChecks.swift
+      - path: CoverPipelineBaseline.swift
+      - path: SimulationChecks.swift
+      - path: Connection.swift
+      - path: ConnectionDiagnostics.swift
+      - path: DiagnosticChecks.swift
+      - path: ImageWorkQueues.swift
+      - path: Library.swift
+      - path: AnimationPlayback.swift
+      - path: AnimationPolicy.swift
+      - path: AnimationPolicyChecks.swift
+      - path: ReadingCache.swift
+      - path: ReaderPager.swift
+      - path: PositionControls.swift
+      - path: ReaderView.swift
+      - path: ShelfView.swift
+      - path: DebugAppContent.swift
+      - path: ConnectionRecoveryChecks.swift
+      - path: LocalUpdateChecks.swift
+      - path: RelatedShelf.swift
+      - path: RelatedChecks.swift
       - path: PrivacyInfo.xcprivacy
-        buildPhase: resources
+      - path: Assets.xcassets
     settings:
       configs:
         Debug:
@@ -25,12 +51,13 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: local.shelf.reader
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: Info.plist
+        INFOPLIST_KEY_UILaunchScreen_Generation: NO
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: 0.4.13
-        CURRENT_PROJECT_VERSION: 39
+        MARKETING_VERSION: 0.4.38
+        CURRENT_PROJECT_VERSION: 65
   ReaderInteractionChecks:
     type: bundle.ui-testing
     platform: iOS

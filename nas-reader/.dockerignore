@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!*.py
+!requirements.txt
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+.env*
+__pycache__/

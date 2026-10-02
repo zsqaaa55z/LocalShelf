@@ -1,0 +1,8 @@
+plugins { id 'com.android.application' }
+def dailyChecks = project.findProperty('dailyUiChecks') == 'true'
+android {
+    namespace 'local.shelf.sync'
+    compileSdk 36
+    defaultConfig { applicationId (dailyChecks ? 'local.shelf.sync.dailytest' : 'local.shelf.sync'); minSdk 29; targetSdk 36; versionCode 16; versionName '0.4.10'; testInstrumentationRunner (dailyChecks ? 'local.shelf.sync.DailyUiChecks' : project.findProperty('readOnlyProbe') == 'true' ? 'local.shelf.sync.ReadOnlyReadProbe' : 'local.shelf.sync.DeviceChecks'); manifestPlaceholders = [fixtureAuthority: dailyChecks ? 'local.shelf.sync.dailytest.test.documents' : 'local.shelf.sync.test.documents'] }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}

@@ -5,8 +5,143 @@ import Foundation
         var count=0
         func pass(_ condition:Bool,_ name:String){precondition(condition,name);count+=1;print("PASS \(name)")}
         func rejects(_ name:String,_ run:()throws->Void){do{try run();fatalError(name)}catch{count+=1;print("PASS \(name)")}}
+        pass(ShelfSource.manual.path("/v1/books?offset=0&limit=100",target:.nas)=="/manual/v1/books?offset=0&limit=100","手动书库目录独立路由")
+        pass(ShelfSource.eh.path("/v1/books/1/pages/2",target:.nas)=="/v1/books/1/pages/2","Eh 路由完全不变")
+        pass(ShelfSource.manual.path("/v2/identity?nonce=test",target:.nas)=="/v2/identity?nonce=test","配对仍属于服务器，不切换凭据")
+        pass(ShelfSource.manual.path("/v1/books/1/cover?width=480",target:.android)=="/v1/books/1/cover?width=480","安卓桥接不受手动选择影响")
+        let manualList=BookList(orderVerified:true,total:0,books:[],orderPolicy:ShelfSource.manualPolicy)
+        try LibraryRules.validate(manualList)
+        pass(ShelfSource.manual.accepts(manualList) && !ShelfSource.eh.accepts(manualList),"手动空书库可读，禁止当作 Eh 目录")
+        let ehList=BookList(orderVerified:true,total:0,books:[],orderPolicy:"ehviewer-downloads-time-desc")
+        pass(ShelfSource.eh.accepts(ehList) && !ShelfSource.manual.accepts(ehList),"禁止 Eh 目录串入手动书库")
+        pass(CoverRules.key(scope:"server\neh",path:"/v1/books/1/cover") != CoverRules.key(scope:"server\nmanual",path:"/v1/books/1/cover"),"相同漫画编号封面缓存不串库")
+        pass(ReadingProgress.key(scope:"server\neh",id:"1") != ReadingProgress.key(scope:"server\nmanual",id:"1"),"相同漫画编号阅读进度不串库")
+        let oldBook=try JSONDecoder().decode(Book.self,from:Data(#"{"id":"1","title":"Legacy","rank":0}"#.utf8))
+        pass(oldBook.pageCount==nil && oldBook.pageCountLabel==nil,"旧服务及旧书库快照无页数字段仍可读取")
+        var counted=oldBook;counted.pageCount=128
+        pass(counted.pageCountLabel=="128","封面页数只显示数字，不附加页字")
+        pass(try JSONDecoder().decode(Book.self,from:JSONEncoder().encode(counted))==counted,"页数可随原书库缓存持久化")
+        pass(counted != oldBook,"只有页数改变也能触发书库元数据更新")
+        for pages in [0,1,1024,20000] {
+            counted.pageCount=pages
+            try LibraryRules.validate(BookList(orderVerified:true,total:1,books:[counted]))
+            pass(counted.pageCountLabel==(pages==0 ? nil:String(pages)),"有效页数及零页状态 \(pages)")
+        }
+        for pages in [-1,20001] {
+            counted.pageCount=pages
+            rejects("拒绝非法封面页数 \(pages)"){try LibraryRules.validate(BookList(orderVerified:true,total:1,books:[counted]))}
+        }
+        counted.pageCount=128;counted.available=false
+        pass(counted.pageCountLabel==nil,"缺失漫画不显示过期页数")
+        let windowLibrary=String(repeating:"a",count:64)
+        let relatedChoice=RelatedChoice(id:windowLibrary,name:"Demo",matchKind:"artist",count:1)
+        let relatedOptions=RelatedOptions(bookID:"1",kind:.authors,libraryId:windowLibrary,catalogRevision:windowLibrary,options:[relatedChoice])
+        try relatedOptions.validate(book:"1",kind:.authors,library:windowLibrary);pass(true,"作者候选身份与有界结果校验")
+        rejects("拒绝跨类型结果"){try relatedOptions.validate(book:"1",kind:.series,library:windowLibrary)}
+        rejects("拒绝跨漫画候选"){try relatedOptions.validate(book:"2",kind:.authors,library:windowLibrary)}
+        rejects("拒绝跨书库作者候选"){try relatedOptions.validate(book:"1",kind:.authors,library:String(repeating:"b",count:64))}
+        rejects("拒绝重复候选"){try RelatedOptions(bookID:"1",kind:.authors,libraryId:windowLibrary,catalogRevision:windowLibrary,options:[relatedChoice,relatedChoice]).validate(book:"1",kind:.authors,library:windowLibrary)}
+        rejects("拒绝控制字符姓名"){try RelatedChoice(id:windowLibrary,name:"Demo\nInjected",matchKind:"artist",count:1).validate(kind:.authors)}
+        rejects("拒绝超量候选计数"){try RelatedChoice(id:windowLibrary,name:"Demo",matchKind:"artist",count:20001).validate(kind:.authors)}
+        let relatedList=BookList(orderVerified:true,total:1,books:[Book(id:"1",title:"Synthetic",rank:8000)],catalogRevision:windowLibrary,libraryId:windowLibrary)
+        let relatedResult=RelatedResult(bookID:"1",kind:.authors,option:relatedChoice,offset:0,catalog:relatedList)
+        try relatedResult.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+        pass(true,"筛选结果保留全库原 rank，无需改成局部位置")
+        rejects("拒绝错误作者身份"){try relatedResult.validate(book:"1",kind:.authors,choice:String(repeating:"b",count:64),size:50,requestedOffset:0,library:windowLibrary)}
+        rejects("拒绝非法筛选页大小"){try relatedResult.validate(book:"1",kind:.authors,choice:windowLibrary,size:51,requestedOffset:0,library:windowLibrary)}
+        var candidateChoice=RelatedChoice(id:windowLibrary,name:"Demo",matchKind:"name",count:2,possibleCount:1)
+        let candidateList=BookList(orderVerified:true,total:2,books:[Book(id:"1",title:"Demo",rank:0),Book(id:"2",title:"Variant",rank:9)],catalogRevision:windowLibrary,libraryId:windowLibrary)
+        let candidateResult=RelatedResult(bookID:"1",kind:.authors,option:candidateChoice,offset:0,catalog:candidateList,possibleBookIDs:["2"])
+        try candidateResult.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+        pass(true,"弱匹配有独立数量及当页证据，保留原 rank")
+        for ids in [["1"],["3"],["2","2"],[]] {
+            var invalid=candidateResult;invalid.possibleBookIDs=ids
+            rejects("拒绝非法候选页证据 \(ids)"){try invalid.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)}
+        }
+        var missingEvidence=candidateResult;missingEvidence.possibleBookIDs=nil
+        rejects("新协议不能遗漏证据字段"){try missingEvidence.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)}
+        for count in [-1,2,20001] {
+            candidateChoice.possibleCount=count
+            rejects("拒绝非法弱匹配总数 \(count)"){try candidateChoice.validate(kind:.authors)}
+        }
+        let seriesChoice=RelatedChoice(id:windowLibrary,name:"Night",matchKind:"series",count:1)
+        let annotated=RelatedResult(bookID:"1",kind:.series,option:seriesChoice,offset:0,catalog:relatedList,partLabels:["1":"第2巻"])
+        try annotated.validate(book:"1",kind:.series,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+        pass(true,"分卷标签只随当前系列页返回")
+        for parts in [["3":"第2巻"],["1":""],["1":"Injected\nText"]] {
+            var invalid=annotated;invalid.partLabels=parts
+            rejects("拒绝越页或无效卷篇标签"){try invalid.validate(book:"1",kind:.series,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)}
+        }
+        let v3Choice=RelatedChoice(id:windowLibrary,name:"Night",matchKind:"series",count:2,possibleCount:2,evidenceVersion:3)
+        let v3Result=RelatedResult(bookID:"1",kind:.series,option:v3Choice,offset:0,catalog:candidateList,possibleBookIDs:["1","2"],partLabels:["2":"番外"],matchNotes:["1":.seriesSubtitle,"2":.seriesSubtitle])
+        try v3Result.validate(book:"1",kind:.series,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+        pass(true,"v3 系列允许全组待确认，但每本必须有当页原因")
+        for notes:[String:RelatedMatchNote]? in [nil,[:],["1":.seriesTitle],["1":.circle,"2":.seriesTitle],["1":.edition,"3":.edition]] {
+            var invalid=v3Result;invalid.matchNotes=notes
+            rejects("拒绝缺失越页或跨类别原因"){try invalid.validate(book:"1",kind:.series,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)}
+        }
+        var circleResult=RelatedResult(bookID:"1",kind:.authors,option:RelatedChoice(id:windowLibrary,name:"Alice",matchKind:"name",count:2,possibleCount:1,evidenceVersion:3),offset:0,catalog:candidateList,possibleBookIDs:["1"],matchNotes:["1":.circle])
+        try circleResult.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+        pass(true,"社团来源本可以是候选，但不能伪装成确定作者")
+        circleResult.matchNotes=["1":.creditName]
+        try circleResult.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+        pass(true,"署名兜底来源本保留待确认原因")
+        for note in [RelatedMatchNote.workCredit,.nameVariant]{
+            var other=circleResult;other.possibleBookIDs=["2"];other.matchNotes=["2":note]
+            try other.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+            pass(true,"其他作品可以携带同作署名或写法候选")
+        }
+        for note in [RelatedMatchNote.authorSeries,.seriesVariant]{
+            var relaxed=v3Result;relaxed.matchNotes=["1":note,"2":note]
+            try relaxed.validate(book:"1",kind:.series,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)
+            pass(true,"联合和宽松系列保留完整证据")
+        }
+        circleResult.matchNotes=["1":.nameVariant]
+        rejects("作者来源本不允许冒充拼写候选"){try circleResult.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)}
+        for version in [0,2,4]{rejects("拒绝未支持的证据版本"){try RelatedChoice(id:windowLibrary,name:"Demo",matchKind:"series",count:1,possibleCount:0,evidenceVersion:version).validate(kind:.series)}}
+        rejects("v3 不允许遗漏候选总数"){try RelatedChoice(id:windowLibrary,name:"Demo",matchKind:"series",count:1,evidenceVersion:3).validate(kind:.series)}
+        var unexpectedNotes=relatedResult;unexpectedNotes.matchNotes=[:]
+        rejects("旧协议不能夹带无版本证据"){try unexpectedNotes.validate(book:"1",kind:.authors,choice:windowLibrary,size:50,requestedOffset:0,library:windowLibrary)}
+        for kind in RelatedKind.allCases{for note in [RelatedMatchNote.nameVariant,.circle,.creditName,.workCredit,.seriesTitle,.seriesSubtitle,.seriesVariant,.authorSeries,.directory,.edition]{
+            pass(note.valid(for:kind)==(kind == .authors ? [RelatedMatchNote.nameVariant,.circle,.creditName,.workCredit].contains(note):![RelatedMatchNote.nameVariant,.circle,.creditName,.workCredit].contains(note)),"证据原因按作者和系列隔离")
+        }}
+        let windowList=BookList(orderVerified:true,total:1,books:[Book(id:"1",title:"Synthetic",rank:0)],catalogRevision:windowLibrary,libraryId:windowLibrary)
+        let window=CatalogWindow(offset:0,anchor:"1",catalog:windowList)
+        pass(try window.validated(size:50,requestedAnchor:"1",library:windowLibrary).list.books.count==1,"局部窗口校验书库身份、页大小和锚点")
+        for size in [0,-50,51,550]{rejects("窗口拒绝非法分页大小 \(size)"){_=try window.validated(size:size,requestedAnchor:"1",library:windowLibrary)}}
+        rejects("窗口拒绝跨书库响应"){_=try window.validated(size:50,requestedAnchor:"1",library:String(repeating:"b",count:64))}
+        rejects("窗口拒绝不匹配锚点"){_=try window.validated(size:50,requestedAnchor:"2",library:windowLibrary)}
+        rejects("窗口拒绝非分页边界偏移"){_=try CatalogWindow(offset:1,anchor:"1",catalog:windowList).validated(size:50,requestedAnchor:"1",library:windowLibrary)}
+        pass(try CatalogWindow(offset:0,anchor:nil,catalog:windowList).validated(size:50,requestedAnchor:"2",library:windowLibrary).list.total==1,"已移除锚点允许受校验的备用页")
+        pass(PageReadFailure.header(status:412,code:"page_content_changed") == .changed,"只有明确内容冲突可触发页码核对")
+        pass(PageReadFailure.header(status:401,code:"page_content_changed")==nil,"错误代码不能掩盖不同 HTTP 状态")
+        pass(PageReadFailure.classify(URLError(.networkConnectionLost)).automaticRetry && !PageReadFailure.missing.automaticRetry && !PageReadFailure.invalid.automaticRetry,"短暂断网可补试，缺失和无效文件不循环")
+        for text in ["", "0", "-1", "1.5", "99999999", "一", "1 2", "501"]{pass(PageJumpRules.index(text,count:500)==nil,"跳页输入拒绝空值、非整数和越界")}
+        pass(PageJumpRules.index(" 500 ",count:500)==499 && PageJumpRules.index("001",count:500)==0,"跳页准确转换为零起始位置")
+        pass(PageJumpRules.index("1",count:0)==nil && PageJumpRules.nearby(current:0,count:0).isEmpty,"空页序没有可跳目标")
+        pass(PageJumpRules.nearby(current:250,count:500)==[0,249,250,251,499],"快捷目标只有首页、附近与末页，不枚举全书库")
+        pass(PageJumpRules.nearby(current:0,count:1)==[0] && PageJumpRules.nearby(current:0,count:2)==[0,1],"极少页数快捷目标不重复")
         pass(PagingRules.prefetchIndices(current:3,count:8,direction:-1)==[3,2,4,1,5],"反向翻页优先前方邻页，保持双侧两页窗口")
         pass(PagingRules.prefetchIndices(current:0,count:8,direction:-1)==[0,1,2],"反向预取在首页不越界")
+        var policy=ReadingPrefetchPolicy()
+        policy.moved(to:3,now:0);policy.moved(to:4,now:1)
+        pass(!policy.rapid(now:1),"单次翻页保留完整相邻窗口")
+        policy.moved(to:5,now:1.1)
+        pass(policy.rapid(now:1.1),"连续快速翻页触发调度收缩")
+        pass(policy.indices(current:5,count:9,direction:1,thermal:0,pressure:false,now:1.1)==[5,6,7],"快速预取只准备前进方向")
+        pass(policy.animationIndices(current:5,count:9,direction:1,thermal:0,pressure:false,now:1.1)==[5,6],"快速动图仅预热当前和前向邻页")
+        pass(policy.indices(current:5,count:9,direction:-1,thermal:0,pressure:false,now:2)==[5,4,6,3,7],"停止后恢复双侧预取")
+        pass(policy.indices(current:5,count:9,direction:1,thermal:2,pressure:false,now:2)==[5,6],"高温限制后台预取")
+        pass(policy.indices(current:5,count:9,direction:1,thermal:3,pressure:false,now:2)==[5],"严重高温仅保留当前页请求")
+        pass(policy.indices(current:5,count:9,direction:1,thermal:0,pressure:true,now:2)==[5],"内存警告不被自动恢复覆盖")
+        for count in [0,1,8] {for current in [-1,0,7,8] {for direction in [-1,1] {
+            let indices=policy.indices(current:current,count:count,direction:direction,thermal:0,pressure:false,now:1.1)
+            pass(indices.allSatisfy{(0..<count).contains($0)} && Set(indices).count==indices.count,"自适应预取边界安全")
+        }}}
+        let cover="/v1/books/123/cover"
+        pass(CoverRequest.path(cover,pixels:600,thumbnails:true)==cover+"?width=640","NAS 按像素桶请求缩略图")
+        pass(CoverRequest.path(cover,pixels:320,thumbnails:false)==cover,"旧 NAS 与安卓保留原封面地址")
+        pass(CoverRequest.path("/v1/books/123/pages/1",pixels:640,thumbnails:true)==nil,"正文不能进入缩略图接口")
         let suite="localshelf-progress-check-"+UUID().uuidString,defaults=UserDefaults(suiteName:suite)!
         defer{defaults.removePersistentDomain(forName:suite)}
         defaults.set(5,forKey:"page.123");defaults.set(10,forKey:"page.456")
@@ -17,7 +152,7 @@ import Foundation
         pass(ReadingProgress.reset(in:defaults)==0,"空进度重复重置安全")
         let recent=RecentReading(scope:"device/library",book:Book(id:"123",title:"本机测试",rank:12),pageNumber:8,position:2,pageCount:5)
         defaults.set(try JSONEncoder().encode(recent),forKey:RecentReading.key)
-        pass(ProgressBackup.capture(in:defaults).libraries.first?.recent==recent,"升级后未重连也能导出旧版最近阅读")
+        pass(RecentReading.load(scope:recent.scope,in:defaults)==recent,"移除备份功能后仍兼容旧版最近阅读")
         recent.save(in:defaults)
         pass(RecentReading.load(scope:"device/library",in:defaults)==recent,"最近阅读持久化原页码与列表位置")
         pass(RecentReading.load(scope:"other/library",in:defaults)==nil,"不同设备不能恢复同 ID 的最近阅读")
@@ -49,19 +184,13 @@ import Foundation
         let nasRecent=RecentReading(scope:"nas/library",book:Book(id:"123",title:"Synthetic NAS",rank:1),pageNumber:17,position:16,pageCount:20)
         androidRecent.save(in:defaults);nasRecent.save(in:defaults)
         pass(RecentReading.load(scope:"android/library",in:defaults)==androidRecent,"切换书库保留双方继续阅读")
-        let archive=try ProgressBackup.decode(ProgressBackup.capture(in:defaults).data())
-        let json=String(decoding:try archive.data(),as:UTF8.self)
-        pass(!json.contains("pairing") && !json.contains("pageSize") && !json.contains("token"),"导出仅包含白名单阅读元数据")
-        _ = ReadingProgress.reset(in:defaults)
-        ReadingProgress.save(19,scope:"nas/library",id:"123",in:defaults)
-        _ = archive.restore(in:defaults)
-        pass(ReadingProgress.page(scope:"nas/library",id:"123",in:defaults)==19,"恢复备份不覆盖目标已有页码")
-        pass(ReadingProgress.page(scope:"android/library",id:"123",in:defaults)==9,"恢复备份补充缺失阅读位置")
-        pass(RecentReading.load(scope:"android/library",in:defaults)==androidRecent,"恢复双方最近阅读")
-        rejects("拒绝损坏阅读备份"){_ = try ProgressBackup.decode(Data("broken".utf8))}
-        rejects("拒绝不支持备份版本"){_ = try ProgressBackup(version:2,libraries:[],legacy:[:]).data()}
-        rejects("拒绝备份非法漫画 ID"){_ = try ProgressBackup(version:1,libraries:[],legacy:["../1":1]).data()}
-        rejects("拒绝超大备份"){_ = try ProgressBackup.decode(Data(count:8*1024*1024+1))}
+        let legacyOwner=defaults.string(forKey:"reading.legacyOwner")
+        pass(ReadingProgress.reset(in:defaults)==3,"重置同时清除旧版、安卓和 NAS 阅读位置")
+        pass(ReadingProgress.page(scope:"android/library",id:"123",in:defaults)==0 && ReadingProgress.page(scope:"nas/library",id:"123",in:defaults)==0,"重置所有服务器的页码")
+        pass(RecentReading.load(scope:"android/library",in:defaults)==nil && RecentReading.load(scope:"nas/library",in:defaults)==nil,"重置所有服务器的继续阅读")
+        pass(defaults.string(forKey:"reading.legacyOwner")==legacyOwner && defaults.string(forKey:"pairing")=="keep","重置保留来源隔离标记和配对")
+        ReadingProgress.register(scope:"android/library",server:.android,in:defaults)
+        pass(ReadingProgress.page(scope:"android/library",id:"123",in:defaults)==0,"重连不会重新认领已重置的旧页码")
         pass(ReaderService(app:"localshelf-reader",version:1,serverKind:"nas",capabilities:["reader-v1","pair-v2","locate-v1"]).compatible,"NAS 阅读服务能力验证")
         pass(!ReaderService(app:"localshelf-sync",version:1,serverKind:"nas",capabilities:[]).compatible,"备份接收端不被误认作阅读服务")
         func locatorPage(_ page:Int,_ size:Int,_ changed:Bool=false)->BookList{
@@ -82,7 +211,14 @@ import Foundation
         let cancelled=Task{try await CatalogLocator.find(id:"701",rankHint:0){page,size in locatorPage(page,size)}}
         cancelled.cancel()
         do{_ = try await cancelled.value;fatalError("cancel ignored")}catch{pass(error is CancellationError,"用户取消中断定位")}
-        pass(CoverRules.diskBudget==2_000_000_000,"磁盘封面上限为 2 GB，不分配正文缓存")
+        pass(CoverRules.diskBudget+MediaDiskBudget.body==2_000_000_000 && MediaDiskBudget.body==512_000_000,"封面和近期正文共用 2 GB 总预算")
+        let pageHash=String(repeating:"a",count:64)
+        let validManifest=Pages(pages:[Page(number:1,sha256:pageHash,size:100)],id:"1",libraryId:pageHash,contentRevision:pageHash)
+        try LibraryRules.validate(validManifest);pass(true,"新页清单包含稳定身份与正文校验")
+        rejects("拒绝缺少书库身份的页哈希清单"){try LibraryRules.validate(Pages(pages:validManifest.pages,id:"1",contentRevision:pageHash))}
+        rejects("拒绝页内容哈希无效"){try LibraryRules.validate(Pages(pages:[Page(number:1,sha256:"bad",size:100)],id:"1",libraryId:pageHash,contentRevision:pageHash))}
+        rejects("拒绝负文件长度"){try LibraryRules.validate(Pages(pages:[Page(number:1,sha256:pageHash,size:-1)],id:"1",libraryId:pageHash,contentRevision:pageHash))}
+        rejects("拒绝不带版本却夹带页哈希"){try LibraryRules.validate(Pages(pages:validManifest.pages))}
         let coverKey=CoverRules.key(scope:"device/catalog",path:"/v1/books/1/cover")
         pass(coverKey?.count==64 && coverKey==CoverRules.key(scope:"device/catalog",path:"/v1/books/1/cover"),"同一设备书库封面键稳定")
         pass(coverKey != CoverRules.key(scope:"device/changed",path:"/v1/books/1/cover") && coverKey != CoverRules.key(scope:"other/catalog",path:"/v1/books/1/cover"),"不同设备和书库版本隔离")
@@ -166,18 +302,54 @@ import Foundation
         pass(PagingRules.swipeStep(x:120,y:0,width:390,velocityX:-1000)==0,"反向收回不跨过当前页误跳")
         pass(PagingRules.swipeStep(x:20,y:40,width:390,velocityX:2000)==0,"纵向快速滑动不翻页")
         pass(PagingRules.swipeStep(x:.nan,y:0,width:390,velocityX:1000)==0 && PagingRules.swipeStep(x:20,y:0,width:390,velocityX:.infinity)==0,"异常速度或位移安全忽略")
+        for sign in [-1.0,1.0] {
+            let next=sign<0 ? 1 : -1
+            for speed in [300.0,600,649,650,651] {
+                pass(PagingRules.swipeStep(x:sign*24,y:0,width:400,velocityX:sign*speed)==next,"24 点短划连续速度区间均可识别，不再卡 650 门槛")
+            }
+            var motion=ReaderSwipeMotion();motion.reset(time:0)
+            for (x,t) in [(6.0,0.01),(16.0,0.02),(24.0,0.04),(24.0,0.06)]{motion.record(x:sign*x,time:t)}
+            let lift=motion.release(fallbackVelocity:0)
+            pass(!lift.reversed && !lift.paused && PagingRules.swipeStep(x:sign*24,y:0,width:400,velocityX:lift.velocityX)==next,"先快划后抬手减速，近期轨迹仍识别为翻页")
+            let noise=motion.release(fallbackVelocity:sign * -20)
+            pass(!noise.reversed,"抬手微弱反向噪声不吞掉有效短划")
+            var held=motion;held.record(x:sign*24,time:0.2)
+            let stop=held.release(fallbackVelocity:sign*1400)
+            pass(stop.paused && stop.velocityX==0 && PagingRules.swipeStep(x:sign*24,y:0,width:400,velocityX:stop.velocityX)==0,"短划后停住不沿用过期峰值速度")
+            var reversed=motion;reversed.record(x:sign*16,time:0.075)
+            pass(reversed.release(fallbackVelocity:sign*500).reversed,"回收 8 点时，即便系统速度仍滞后也取消翻页")
+            pass(motion.release(fallbackVelocity:sign * -500).reversed,"明确反向末速度继续取消")
+            var slow=ReaderSwipeMotion();slow.reset(time:0)
+            for i in 1...12{slow.record(x:sign*Double(i)*2,time:Double(i)*0.05)}
+            let slowLift=slow.release(fallbackVelocity:0)
+            pass(PagingRules.swipeStep(x:sign*24,y:0,width:400,velocityX:slowLift.velocityX)==0,"慢速 24 点短拖不误翻")
+            for hz in [60,120,240] {
+                var sampled=ReaderSwipeMotion();sampled.reset(time:0)
+                for tick in 1...(hz/10){sampled.record(x:sign*400*Double(tick)/Double(hz),time:Double(tick)/Double(hz))}
+                pass(abs(sampled.release(fallbackVelocity:0).velocityX-sign*400)<0.01,"60/120/240 Hz 采样同一轨迹结果一致")
+            }
+        }
+        var boundedMotion=ReaderSwipeMotion();boundedMotion.reset(time:0)
+        for tick in 1...10000{boundedMotion.record(x:Double(tick),time:Double(tick)*0.001)}
+        pass(boundedMotion.sampleCount<=32,"长手势的轨迹样本有界，不随阅读时间增长")
+        let beforeInvalid=boundedMotion.release(fallbackVelocity:0).velocityX
+        boundedMotion.record(x:.nan,time:11);boundedMotion.record(x:0,time:.infinity);boundedMotion.record(x:0,time:0)
+        pass(boundedMotion.release(fallbackVelocity:0).velocityX==beforeInvalid,"忽略异常或乱序触摸样本")
+        boundedMotion.reset(time:20);boundedMotion.record(x:0,time:21)
+        pass(boundedMotion.release(fallbackVelocity:0).velocityX==0,"新触摸不会继承上一手势速度")
+        for x in [0.0,5,11.9]{pass(PagingRules.swipeStep(x:-x,y:0,width:400,velocityX:-2000)==0,"极短运动仍不触发翻页")}
         pass(PagingRules.prefetchIndices(current:4,count:10)==[4,5,3,6,2],"第 5 张预取第 3–7 张，优先当前和相邻")
         pass(PagingRules.prefetchIndices(current:0,count:10)==[0,1,2],"首页预取不越界")
         pass(PagingRules.prefetchIndices(current:9,count:10)==[9,8,7],"末页预取不越界")
         pass(PagingRules.prefetchIndices(current:0,count:0).isEmpty,"空页序不预取")
         pass(PagingRules.prefetchIndices(current:0,count:1)==[0],"单页不重复请求")
-        pass(PagingRules.count(total:12071,size:50)==242,"50 本分页及尾页")
-        pass(PagingRules.count(total:12071,size:500)==25,"500 本分页及尾页")
+        pass(PagingRules.count(total:10071,size:50)==202,"50 本分页及尾页")
+        pass(PagingRules.count(total:10071,size:500)==21,"500 本分页及尾页")
         pass(PagingRules.count(total:0,size:100)==1,"空书库分页边界")
         pass(PagingRules.index(-1,count:3)==0 && PagingRules.index(99,count:3)==2,"阅读滑块上下界")
-        let qr="{\"app\":\"localshelf\",\"version\":1,\"address\":\"http://192.168.240.2:8088\",\"token\":\"abcdefghijklmnopqrstuvwxyzABCDEF\"}"
-        pass(try PairingCode.parse(qr).address == "http://192.168.240.2:8088","配对码解析地址和口令")
-        rejects("拒绝公网配对码"){_=try PairingCode.parse(qr.replacingOccurrences(of:"192.168.240.2",with:"8.8.8.8"))}
+        let qr="{\"app\":\"localshelf\",\"version\":1,\"address\":\"http://192.168.1.2:8088\",\"token\":\"abcdefghijklmnopqrstuvwxyzABCDEF\"}"
+        pass(try PairingCode.parse(qr).address == "http://192.168.1.2:8088","配对码解析地址和口令")
+        rejects("拒绝公网配对码"){_=try PairingCode.parse(qr.replacingOccurrences(of:"192.168.1.2",with:"8.8.8.8"))}
         rejects("拒绝非本应用二维码"){_=try PairingCode.parse(qr.replacingOccurrences(of:"localshelf",with:"other"))}
         rejects("拒绝不支持的配对协议"){_=try PairingCode.parse(qr.replacingOccurrences(of:"\"version\":1",with:"\"version\":3"))}
         let v2=qr.replacingOccurrences(of:"\"version\":1",with:"\"version\":2,\"deviceId\":\"0123456789abcdef0123456789abcdef\"")
@@ -203,8 +375,8 @@ import Foundation
         try LibraryRules.validate(Pages(pages:[Page(number:1),Page(number:3),Page(number:10)]));pass(true,"缺页保留原编号")
         rejects("拒绝词典序页码"){try LibraryRules.validate(Pages(pages:[Page(number:1),Page(number:10),Page(number:2)]))}
         rejects("拒绝重复页码"){try LibraryRules.validate(Pages(pages:[Page(number:1),Page(number:1)]))}
-        _=try LibraryRules.address("http://192.168.240.2:8088");pass(true,"接受私人局域网地址")
-        for s in ["http://example.com","http://8.8.8.8","http://192.168.240.2.evil.test","http://a:b@192.168.240.2","http://192.168.240.2/?key=a"]{rejects("拒绝非预期地址"){_=try LibraryRules.address(s)}}
+        _=try LibraryRules.address("http://192.168.1.2:8088");pass(true,"接受私人局域网地址")
+        for s in ["http://example.com","http://8.8.8.8","http://192.168.1.2.evil.test","http://a:b@192.168.1.2","http://192.168.1.2/?key=a"]{rejects("拒绝非预期地址"){_=try LibraryRules.address(s)}}
         var catalog=CatalogPageCache()
         let time=Date(timeIntervalSince1970:1000),rev=String(repeating:"a",count:64),root=String(repeating:"b",count:64)
         func list(_ page:Int,_ size:Int=50,_ revision:String=rev,_ title:String="fixture")->BookList {
@@ -259,11 +431,16 @@ import Foundation
         pageLists.clear();pass(pageLists.cost==0,"内存清理释放页码缓存")
         rejects("页码缓存拒绝重复页"){_=try PageListCache.validated(Pages(pages:[Page(number:1),Page(number:1)]))}
         pass(try PairingPIN.body("001234")==Data("001234".utf8),"配对码保留前导零")
+        pass(try NASPassword.body("Synthetic-pass-42")==Data("Synthetic-pass-42".utf8),"NAS 固定密码支持字母与符号")
+        pass(try NASPassword.body(" spaced ")==Data(" spaced ".utf8),"密码空格不被偷偷裁剪")
+        for bad in ["", "short", String(repeating:"x",count:129), "password\n", "password\u{0}"]{rejects("拒绝超限或控制字符密码"){_=try NASPassword.body(bad)}}
+        pass(ReaderService(app:"localshelf-reader",version:1,serverKind:"nas",capabilities:["reader-v1","pair-v2","locate-v1","password-pair-v1"]).passwordPairing,"固定密码需服务端明确能力支持")
+        pass(!ReaderService(app:"localshelf-sync",version:1,serverKind:"nas",capabilities:["password-pair-v1"]).passwordPairing,"不会向上传服务发送阅读密码")
         for bad in ["12345","1234567","１２３４５６","12345a","123 45",""]{rejects("拒绝非六位 ASCII 配对码"){_=try PairingPIN.body(bad)}}
         let pinReply=Data("{\"app\":\"localshelf\",\"version\":2,\"deviceId\":\"0123456789abcdef0123456789abcdef\",\"token\":\"abcdefghijklmnopqrstuvwxyzABCDEF\"}".utf8)
-        pass(try PairingPIN.response(pinReply,address:"http://192.168.240.2:8088").version==2,"配对码响应转换为强随机凭据")
+        pass(try PairingPIN.response(pinReply,address:"http://192.168.1.2:8088").version==2,"配对码响应转换为强随机凭据")
         rejects("配对码响应拒绝公网地址"){_=try PairingPIN.response(pinReply,address:"https://example.com")}
-        rejects("配对码响应拒绝超限数据"){_=try PairingPIN.response(Data(repeating:0,count:2049),address:"http://192.168.240.2:8088")}
+        rejects("配对码响应拒绝超限数据"){_=try PairingPIN.response(Data(repeating:0,count:2049),address:"http://192.168.1.2:8088")}
         print("\(count) protocol checks passed")
     }
 }

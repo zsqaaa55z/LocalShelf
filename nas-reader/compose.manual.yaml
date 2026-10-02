@@ -1,0 +1,11 @@
+# Opt-in overlay. Existing compose.yaml alone keeps uploads disabled.
+# docker compose -f compose.yaml -f compose.manual.yaml up -d --build
+services:
+  localshelf-reader:
+    command: ["python", "/app/server.py", "--manual-root", "/manual"]
+    volumes:
+      - type: bind
+        source: "${MANUAL_DATA_DIR:?独立手动书库目录，不得与同步或阅读配置目录重叠}"
+        target: /manual
+        bind:
+          create_host_path: false

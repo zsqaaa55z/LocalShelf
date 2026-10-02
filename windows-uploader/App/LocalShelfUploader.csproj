@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>LocalShelf-Uploader</AssemblyName><Version>0.1.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Core/LocalShelfUploader.Core.csproj"/></ItemGroup>
+  <ItemGroup><Content Include="../../LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+</Project>

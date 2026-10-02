@@ -1,0 +1,25 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'local.shelf.reader.android'
+    compileSdk 36
+    useLibrary 'android.test.runner'
+    useLibrary 'android.test.base'
+    useLibrary 'android.test.mock'
+    defaultConfig {
+        applicationId 'local.shelf.reader.android'
+        minSdk 31
+        targetSdk 36
+        versionCode 3
+        versionName '0.1.2'
+        testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildTypes {
+        release { minifyEnabled false; debuggable false }
+    }
+}
+dependencies {
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    implementation 'androidx.viewpager2:viewpager2:1.1.0'
+}
