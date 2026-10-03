@@ -102,6 +102,12 @@ android-sync/tests/ReadPipelineTest.java
 android-sync/tests/Recovery047HTTPTest.java
 android-sync/tests/Recovery047Test.java
 docs/VALIDATION.md
+docs/screenshots/README.md
+docs/screenshots/android-library.png
+docs/screenshots/android-reader.png
+docs/screenshots/android-related.png
+docs/screenshots/ios-library.png
+docs/screenshots/web-library.png
 ios/AnimationPlayback.swift
 ios/AnimationPolicy.swift
 ios/AnimationPolicyChecks.swift

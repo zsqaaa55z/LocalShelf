@@ -27,6 +27,7 @@
 
 - EH 字母图标为独立 AI 辅助生成资源，不使用个人头像或官方 EhViewer 图标。macOS 的「续签」图标由仓库中的原生绘图脚本生成。在贡献者有权授予的范围内按 MIT 提供，不保证排他性版权或商标权。
 - 测试媒体由程序生成，不含真实漫画。界面中的系统符号通过系统 API 使用，没有导出 SF Symbols 字体或图形给其他平台。
+- README 的 UI 截图来自程序生成的演示书库，不附带用户漫画；截图来源与范围见 [截图说明](docs/screenshots/README.md)。
 - 用户导入的图片与书库元数据属于各自权利人，不由本项目许可覆盖。
 
 主要依据：[Pillow 官方项目](https://github.com/python-pillow/Pillow)、[AndroidX 源码](https://android.googlesource.com/platform/frameworks/support/)、[.NET 运行时](https://github.com/dotnet/runtime)。

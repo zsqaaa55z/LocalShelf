@@ -4,6 +4,22 @@
 
 LocalShelf 是面向可信私人局域网的开源工具套件，不提供漫画内容、网站登录、资源搜索或在线下载。排序还原 EhViewer 已下载漫画的下载顺序，支持 EhViewer 导出的下载列表；顺序冲突或信息缺失时会提示确认，不冒充已核实。
 
+## 界面预览
+
+以下为真实 App 和网页运行截图，封面、书名和书库数量均来自**程序生成的演示数据**，不包含私人书库或漫画资源。截图选自既有 UI 回归记录，展示主要交互；不是设计稿，也不是本次对所有最新版本重新截图。见[截图说明](docs/screenshots/README.md)。
+
+| iOS · 双书库与封面页数 | Android · 书库与继续阅读 |
+|:---:|:---:|
+| <img src="docs/screenshots/ios-library.png" width="270" alt="iOS 演示书库，展示 Eh 同步与手动上传切换、三列封面及数字页数"> | <img src="docs/screenshots/android-library.png" width="270" alt="Android 演示书库，展示双书库、继续阅读、三列封面与分页"> |
+
+| Android · 阅读与页码控制 | Android · 同作者作品 |
+|:---:|:---:|
+| <img src="docs/screenshots/android-reader.png" width="270" alt="Android 阅读页，显示合成动图的一帧、播放控制与可拖动页码进度条"> | <img src="docs/screenshots/android-related.png" width="270" alt="Android 同作者作品列表，使用虚构作者和演示封面"> |
+
+**PC 网页书库**
+
+<img src="docs/screenshots/web-library.png" width="960" alt="LocalShelf PC 网页演示书库，展示双书库、分页、列数选择与封面页数">
+
 ## 当前源码
 
 | 组件 | 版本 | 目录 |
